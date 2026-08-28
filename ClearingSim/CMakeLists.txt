@@ -11,6 +11,8 @@ qt_add_executable(ClearingSim
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    clearing_engine.h
+    clearing_engine.cpp
 )
 
 target_link_libraries(ClearingSim
