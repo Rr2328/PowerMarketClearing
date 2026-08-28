@@ -10,7 +10,6 @@ qt_add_executable(ClearingSim
     main.cpp
     mainwindow.cpp
     mainwindow.h
-    mainwindow.ui
 )
 
 target_link_libraries(ClearingSim
@@ -19,6 +18,10 @@ target_link_libraries(ClearingSim
         Qt::Widgets
         Qt::Charts
 )
+
+if(MSVC)
+    target_compile_options(ClearingSim PRIVATE /utf-8)
+endif()
 
 install(TARGETS ClearingSim
     BUNDLE  DESTINATION .
