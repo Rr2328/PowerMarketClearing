@@ -10,6 +10,8 @@ qt_add_executable(ClearingSim
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    data/data_reader.h
+    data/data_reader.cpp
 )
 
 target_link_libraries(ClearingSim
@@ -35,3 +37,22 @@ qt_generate_deploy_app_script(
     NO_UNSUPPORTED_PLATFORM_ERROR
 )
 install(SCRIPT ${deploy_script})
+# ============================================================
+# A data module independent test
+# ============================================================
+
+add_executable(DataReaderTest
+    data/data_reader_test.cpp
+    data/data_reader.cpp
+    data/data_reader.h
+)
+
+target_include_directories(DataReaderTest
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+
+target_link_libraries(DataReaderTest
+    PRIVATE
+    Qt${QT_VERSION_MAJOR}::Core
+)
