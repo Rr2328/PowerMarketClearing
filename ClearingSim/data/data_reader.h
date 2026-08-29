@@ -5,164 +5,106 @@
 #include <QStringList>
 #include <QVector>
 
-// ============================================================
-// A 数据管理模块
-//
-// 作用：
-// 把 CSV 中的文本数据读取并转换为程序可以直接使用的数据结构。
-// B 的算法模块、C 的界面模块以后可以直接使用这些结构。
-// ============================================================
-
-
-// ============================================================
-// 1. 发电机组申报
-//
-// generator_bids.csv
-//
-// 机组ID,机组名称,机组类型,申报段,
-// 申报电价(元/MWh),申报电量(MWh)
-// ============================================================
-
+// 发电侧申报数据
 struct GeneratorBid
 {
     QString id;
     QString name;
     QString type;
 
-    int segment;
+    int segment = 0;
 
-    double price;
-    double quantity;
-
-    GeneratorBid()
-        : segment(0),
-        price(0.0),
-        quantity(0.0)
-    {
-    }
+    double price = 0.0;
+    double quantity = 0.0;
 };
 
-
-// ============================================================
-// 2. 用户申报
-//
-// consumer_bids.csv
-// ============================================================
-
+// 用户侧申报数据
 struct ConsumerBid
 {
     QString id;
     QString name;
 
-    int segment;
+    int segment = 0;
 
-    double price;
-    double quantity;
-
-    ConsumerBid()
-        : segment(0),
-        price(0.0),
-        quantity(0.0)
-    {
-    }
+    double price = 0.0;
+    double quantity = 0.0;
 };
 
-
-// ============================================================
-// 3. 96 时段负荷
-//
-// load_curve.csv
-// ============================================================
-
+// 负荷曲线数据
 struct LoadPoint
 {
-    int period;
+    int period = 0;
 
     QString time;
 
-    double load;
-
-    LoadPoint()
-        : period(0),
-        load(0.0)
-    {
-    }
+    double load = 0.0;
 };
 
-
-// ============================================================
-// 4. 新能源实际出力
-//
-// renewable_output.csv
-// ============================================================
-
+// 新能源出力数据
 struct RenewableOutput
 {
     QString generatorId;
-
     QString generatorType;
 
-    int period;
+    int period = 0;
 
-    double output;
+    double output = 0.0;
+};
 
-    RenewableOutput()
-        : period(0),
-        output(0.0)
+// 数据文件路径
+struct DataFileSet
+{
+    QString generatorBidsFile;
+    QString consumerBidsFile;
+    QString loadCurveFile;
+    QString renewableOutputFile;
+};
+
+// 统一市场输入数据
+struct MarketData
+{
+    QVector<GeneratorBid> generatorBids;
+    QVector<ConsumerBid> consumerBids;
+    QVector<LoadPoint> loadCurve;
+    QVector<RenewableOutput> renewableOutputs;
+
+    void clear()
     {
+        generatorBids.clear();
+        consumerBids.clear();
+        loadCurve.clear();
+        renewableOutputs.clear();
     }
 };
 
-
-// ============================================================
-// DataReader
-//
-// 所有 CSV 的统一入口。
-// ============================================================
-
+// CSV 数据读取接口
 class DataReader
 {
 public:
-
-    // --------------------------------------------------------
-    // 读取机组申报
-    // --------------------------------------------------------
-
     static bool readGeneratorBids(
-        const QString& filePath,
-        QVector<GeneratorBid>& data,
-        QStringList& errors);
-
-
-    // --------------------------------------------------------
-    // 读取用户申报
-    // --------------------------------------------------------
+        const QString &filePath,
+        QVector<GeneratorBid> &data,
+        QStringList &errors);
 
     static bool readConsumerBids(
-        const QString& filePath,
-        QVector<ConsumerBid>& data,
-        QStringList& errors);
-
-
-    // --------------------------------------------------------
-    // 读取96时段负荷
-    // --------------------------------------------------------
+        const QString &filePath,
+        QVector<ConsumerBid> &data,
+        QStringList &errors);
 
     static bool readLoadCurve(
-        const QString& filePath,
-        QVector<LoadPoint>& data,
-        QStringList& errors);
-
-
-    // --------------------------------------------------------
-    // 读取新能源实际出力
-    // --------------------------------------------------------
+        const QString &filePath,
+        QVector<LoadPoint> &data,
+        QStringList &errors);
 
     static bool readRenewableOutput(
-        const QString& filePath,
-        QVector<RenewableOutput>& data,
-        QStringList& errors);
-};
+        const QString &filePath,
+        QVector<RenewableOutput> &data,
+        QStringList &errors);
 
+    static bool readAll(
+        const DataFileSet &files,
+        MarketData &data,
+        QStringList &errors);
+};
 
 #endif // DATA_READER_H

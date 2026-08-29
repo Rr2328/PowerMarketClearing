@@ -1,631 +1,416 @@
+#include "data_reader.h"
+
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
-#include <QSet>
+#include <QTemporaryDir>
+#include <QTextStream>
 
-#include "data_reader.h"
-
-
-// ============================================================
-// 打印错误信息
-// ============================================================
-
-void printErrors(
-    const QStringList& errors)
+namespace
 {
-    for (int i = 0;
-         i < errors.size();
-         ++i)
-    {
-        qWarning().noquote()
-        << "  "
-        << errors[i];
-    }
-}
 
+int failedTests = 0;
 
-// ============================================================
-// 测试 generator_bids.csv
-// ============================================================
-
-bool testGeneratorFile(
-    const QString& title,
-    const QString& filePath,
-    int expectedRows)
+// 测试结果输出
+void check(
+    bool condition,
+    const QString &testName)
 {
-    qInfo().noquote()
-    << "\n========================================";
-
-    qInfo().noquote()
-        << title;
-
-    qInfo().noquote()
-        << "========================================";
-
-
-    QVector<GeneratorBid> data;
-
-    QStringList errors;
-
-
-    bool ok =
-        DataReader::readGeneratorBids(
-            filePath,
-            data,
-            errors);
-
-
-    if (!ok)
+    if (condition)
     {
-        qWarning().noquote()
-        << "[FAIL] 文件读取失败";
-
-        printErrors(errors);
-
-        return false;
-    }
-
-
-    qInfo().noquote()
-        << "[PASS] 文件读取成功";
-
-    qInfo().noquote()
-        << "申报记录数："
-        << data.size();
-
-
-    QSet<QString> generatorIds;
-
-
-    for (int i = 0;
-         i < data.size();
-         ++i)
-    {
-        generatorIds.insert(
-            data[i].id);
-    }
-
-
-    qInfo().noquote()
-        << "机组数量："
-        << generatorIds.size();
-
-
-    if (data.size() != expectedRows)
-    {
-        qWarning().noquote()
-        << "[FAIL] 数据行数不正确";
-
-        qWarning().noquote()
-            << "预期："
-            << expectedRows;
-
-        qWarning().noquote()
-            << "实际："
-            << data.size();
-
-        return false;
-    }
-
-
-    // 只打印前5条，避免场景文件太长
-    int printCount =
-        data.size();
-
-    if (printCount > 5)
-    {
-        printCount = 5;
-    }
-
-
-    for (int i = 0;
-         i < printCount;
-         ++i)
-    {
-        const GeneratorBid& g =
-            data[i];
-
-
         qInfo().noquote()
-            << QString(
-                   "%1 | %2 | %3 | 段%4 | %5 元/MWh | %6 MWh")
-                   .arg(g.id)
-                   .arg(g.name)
-                   .arg(g.type)
-                   .arg(g.segment)
-                   .arg(
-                       g.price,
-                       0,
-                       'f',
-                       3)
-                   .arg(
-                       g.quantity,
-                       0,
-                       'f',
-                       1);
+        << "[PASS]" << testName;
     }
+    else
+    {
+        qCritical().noquote()
+        << "[FAIL]" << testName;
 
-
-    return true;
+        ++failedTests;
+    }
 }
 
-
-// ============================================================
-// 测试 consumer_bids.csv
-// ============================================================
-
-bool testConsumerFile(
-    const QString& filePath)
+// 查找项目根目录
+QString searchRepoRoot(
+    const QString &startPath)
 {
-    qInfo().noquote()
-    << "\n========================================";
+    QDir dir(startPath);
 
-    qInfo().noquote()
-        << "TEST - benchmark consumer_bids.csv";
-
-    qInfo().noquote()
-        << "========================================";
-
-
-    QVector<ConsumerBid> data;
-
-    QStringList errors;
-
-
-    bool ok =
-        DataReader::readConsumerBids(
-            filePath,
-            data,
-            errors);
-
-
-    if (!ok)
+    while (true)
     {
-        qWarning().noquote()
-        << "[FAIL] 文件读取失败";
+        if (dir.exists("ClearingSim") &&
+            dir.exists("data/samples"))
+        {
+            return dir.absolutePath();
+        }
 
-        printErrors(errors);
-
-        return false;
+        if (!dir.cdUp())
+        {
+            break;
+        }
     }
 
-
-    if (data.size() != 2)
-    {
-        qWarning().noquote()
-        << "[FAIL] benchmark 应有2条用户申报";
-
-        return false;
-    }
-
-
-    qInfo().noquote()
-        << "[PASS] 用户申报读取成功";
-
-
-    for (int i = 0;
-         i < data.size();
-         ++i)
-    {
-        const ConsumerBid& c =
-            data[i];
-
-
-        qInfo().noquote()
-            << QString(
-                   "%1 | %2 | 段%3 | %4 元/MWh | %5 MWh")
-                   .arg(c.id)
-                   .arg(c.name)
-                   .arg(c.segment)
-                   .arg(
-                       c.price,
-                       0,
-                       'f',
-                       3)
-                   .arg(
-                       c.quantity,
-                       0,
-                       'f',
-                       1);
-    }
-
-
-    return true;
+    return QString();
 }
 
-
-// ============================================================
-// 测试 load_curve.csv
-// ============================================================
-
-bool testLoadFile(
-    const QString& filePath)
+// 自动定位项目根目录
+QString findRepoRoot()
 {
-    qInfo().noquote()
-    << "\n========================================";
+    QString root;
 
-    qInfo().noquote()
-        << "TEST - load_curve.csv";
+    root =
+        searchRepoRoot(
+            QCoreApplication::applicationDirPath());
 
-    qInfo().noquote()
-        << "========================================";
-
-
-    QVector<LoadPoint> data;
-
-    QStringList errors;
-
-
-    bool ok =
-        DataReader::readLoadCurve(
-            filePath,
-            data,
-            errors);
-
-
-    if (!ok)
+    if (!root.isEmpty())
     {
-        qWarning().noquote()
-        << "[FAIL] 文件读取失败";
-
-        printErrors(errors);
-
-        return false;
+        return root;
     }
 
+    root =
+        searchRepoRoot(
+            QDir::currentPath());
 
-    if (data.size() != 96)
+    if (!root.isEmpty())
     {
-        qWarning().noquote()
-        << "[FAIL] 负荷曲线应为96行";
-
-        return false;
+        return root;
     }
 
-
-    qInfo().noquote()
-        << "[PASS] 96时段负荷读取成功";
-
-    qInfo().noquote()
-        << "数据行数："
-        << data.size();
-
-
-    qInfo().noquote()
-        << "第1时段："
-        << data.first().time
-        << data.first().load
-        << "MW";
-
-
-    qInfo().noquote()
-        << "第96时段："
-        << data.last().time
-        << data.last().load
-        << "MW";
-
-
-    return true;
-}
-
-
-// ============================================================
-// 测试 renewable_output.csv
-// ============================================================
-
-bool testRenewableFile(
-    const QString& filePath)
-{
-    qInfo().noquote()
-    << "\n========================================";
-
-    qInfo().noquote()
-        << "TEST - renewable_output.csv";
-
-    qInfo().noquote()
-        << "========================================";
-
-
-    QVector<RenewableOutput> data;
-
-    QStringList errors;
-
-
-    bool ok =
-        DataReader::readRenewableOutput(
-            filePath,
-            data,
-            errors);
-
-
-    if (!ok)
-    {
-        qWarning().noquote()
-        << "[FAIL] 文件读取失败";
-
-        printErrors(errors);
-
-        return false;
-    }
-
-
-    QSet<QString> generatorIds;
-
-
-    for (int i = 0;
-         i < data.size();
-         ++i)
-    {
-        generatorIds.insert(
-            data[i].generatorId);
-    }
-
-
-    qInfo().noquote()
-        << "[PASS] 新能源出力读取成功";
-
-    qInfo().noquote()
-        << "数据行数："
-        << data.size();
-
-    qInfo().noquote()
-        << "新能源机组数量："
-        << generatorIds.size();
-
-
-    if (data.size() != 288)
-    {
-        qWarning().noquote()
-        << "[FAIL] 应有 3 x 96 = 288 行新能源数据";
-
-        return false;
-    }
-
-
-    if (generatorIds.size() != 3)
-    {
-        qWarning().noquote()
-        << "[FAIL] 应有3台新能源机组";
-
-        return false;
-    }
-
-
-    return true;
-}
-
-
-// ============================================================
-// 自动找到仓库根目录
-//
-// 当前文件位置：
-//
-// PowerMarket-Clearing/
-// └── ClearingSim/
-//     └── data/
-//         └── data_reader_test.cpp
-//
-// 因此从当前源文件目录向上两级即可到仓库根目录。
-// ============================================================
-
-QString findRepositoryRoot()
-{
-    QFileInfo sourceFile(
+    const QFileInfo sourceFile(
         QString::fromUtf8(__FILE__));
 
-
-    QDir directory(
+    return searchRepoRoot(
         sourceFile.absolutePath());
-
-
-    // data -> ClearingSim
-    directory.cdUp();
-
-
-    // ClearingSim -> PowerMarket-Clearing
-    directory.cdUp();
-
-
-    return directory.absolutePath();
 }
 
+// 创建临时 CSV 文件
+bool writeTextFile(
+    const QString &filePath,
+    const QString &content)
+{
+    QFile file(filePath);
 
-// ============================================================
-// main
-// ============================================================
+    if (!file.open(
+            QIODevice::WriteOnly |
+            QIODevice::Text))
+    {
+        return false;
+    }
+
+    QTextStream out(&file);
+
+    out << content;
+
+    return true;
+}
+
+// 输出错误信息
+void printErrors(
+    const QStringList &errors)
+{
+    for (const QString &error : errors)
+    {
+        qInfo().noquote()
+        << "   " << error;
+    }
+}
+
+} // namespace
+
 
 int main(
     int argc,
-    char* argv[])
+    char *argv[])
 {
     QCoreApplication app(
         argc,
         argv);
 
+    qInfo().noquote()
+        << "========== DataReader Test ==========";
+
+    // 定位项目
+    const QString repoRoot =
+        findRepoRoot();
+
+    check(
+        !repoRoot.isEmpty(),
+        "定位项目根目录");
+
+    if (repoRoot.isEmpty())
+    {
+        qCritical().noquote()
+        << "无法找到项目根目录";
+
+        return 1;
+    }
 
     qInfo().noquote()
-        << "========================================";
-
-    qInfo().noquote()
-        << "A Data Module - Basic Test";
-
-    qInfo().noquote()
-        << "========================================";
-
-
-    // ========================================================
-    // 不再使用 REPO_ROOT_DIR 宏
-    //
-    // 直接根据当前源文件位置找到仓库根目录。
-    // ========================================================
-
-    QString repoRoot =
-        findRepositoryRoot();
-
-
-    qInfo().noquote()
-        << "Repository root:";
-
-    qInfo().noquote()
+        << "Repo root:"
         << repoRoot;
 
 
-    // ========================================================
-    // 构造四类CSV路径
-    // ========================================================
+    // 设置测试文件
+    DataFileSet files;
 
-    QString benchmarkGenerator =
-        repoRoot
-        +
+    files.generatorBidsFile =
+        repoRoot +
         "/data/samples/benchmark/generator_bids.csv";
 
-
-    QString benchmarkConsumer =
-        repoRoot
-        +
+    files.consumerBidsFile =
+        repoRoot +
         "/data/samples/benchmark/consumer_bids.csv";
 
-
-    QString scenarioGenerator =
-        repoRoot
-        +
-        "/data/samples/scenario/generator_bids.csv";
-
-
-    QString loadCurve =
-        repoRoot
-        +
+    files.loadCurveFile =
+        repoRoot +
         "/data/samples/curves/load_curve.csv";
 
-
-    QString renewableOutput =
-        repoRoot
-        +
+    files.renewableOutputFile =
+        repoRoot +
         "/data/samples/curves/renewable_output.csv";
 
 
-    qInfo().noquote()
-        << "\nCSV path check:";
+    // 测试统一读取接口
+    MarketData marketData;
+    QStringList errors;
 
-    qInfo().noquote()
-        << benchmarkGenerator;
+    bool ok =
+        DataReader::readAll(
+            files,
+            marketData,
+            errors);
 
-    qInfo().noquote()
-        << benchmarkConsumer;
+    check(
+        ok,
+        "统一读取四类市场数据");
 
-    qInfo().noquote()
-        << scenarioGenerator;
-
-    qInfo().noquote()
-        << loadCurve;
-
-    qInfo().noquote()
-        << renewableOutput;
-
-
-    // ========================================================
-    // 开始测试
-    // ========================================================
-
-    bool allPassed =
-        true;
-
-
-    // --------------------------------------------------------
-    // benchmark generator
-    // --------------------------------------------------------
-
-    if (!testGeneratorFile(
-            "TEST - benchmark generator_bids.csv",
-            benchmarkGenerator,
-            2))
+    if (!ok)
     {
-        allPassed =
-            false;
-    }
-
-
-    // --------------------------------------------------------
-    // benchmark consumer
-    // --------------------------------------------------------
-
-    if (!testConsumerFile(
-            benchmarkConsumer))
-    {
-        allPassed =
-            false;
-    }
-
-
-    // --------------------------------------------------------
-    // scenario generator
-    //
-    // 8台机组，共12条分段申报记录
-    // --------------------------------------------------------
-
-    if (!testGeneratorFile(
-            "TEST - scenario generator_bids.csv",
-            scenarioGenerator,
-            12))
-    {
-        allPassed =
-            false;
-    }
-
-
-    // --------------------------------------------------------
-    // 负荷曲线
-    // --------------------------------------------------------
-
-    if (!testLoadFile(
-            loadCurve))
-    {
-        allPassed =
-            false;
-    }
-
-
-    // --------------------------------------------------------
-    // 新能源曲线
-    // --------------------------------------------------------
-
-    if (!testRenewableFile(
-            renewableOutput))
-    {
-        allPassed =
-            false;
-    }
-
-
-    // ========================================================
-    // 最终结果
-    // ========================================================
-
-    qInfo().noquote()
-        << "\n========================================";
-
-
-    if (allPassed)
-    {
-        qInfo().noquote()
-        << "ALL DATA TESTS PASSED";
+        printErrors(errors);
     }
     else
     {
-        qWarning().noquote()
-        << "SOME DATA TESTS FAILED";
+        qInfo().noquote()
+        << "Generator bids:"
+        << marketData.generatorBids.size();
+
+        qInfo().noquote()
+            << "Consumer bids:"
+            << marketData.consumerBids.size();
+
+        qInfo().noquote()
+            << "Load points:"
+            << marketData.loadCurve.size();
+
+        qInfo().noquote()
+            << "Renewable outputs:"
+            << marketData.renewableOutputs.size();
+    }
+
+
+    // 异常数据测试
+    QTemporaryDir tempDir;
+
+    check(
+        tempDir.isValid(),
+        "创建临时测试目录");
+
+    if (tempDir.isValid())
+    {
+        QVector<GeneratorBid> generators;
+        QVector<ConsumerBid> consumers;
+        QVector<LoadPoint> loadPoints;
+        QVector<RenewableOutput> renewable;
+
+
+        // 重复机组申报分段
+        const QString duplicateSegmentFile =
+            tempDir.path() +
+            "/duplicate_segment.csv";
+
+        writeTextFile(
+            duplicateSegmentFile,
+            "id,name,type,segment,price,quantity\n"
+            "G01,Generator1,thermal,1,300,50\n"
+            "G01,Generator1,thermal,1,320,60\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                duplicateSegmentFile,
+                generators,
+                errors);
+
+        check(
+            !ok,
+            "识别重复机组申报分段");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 非法数字
+        const QString invalidPriceFile =
+            tempDir.path() +
+            "/invalid_price.csv";
+
+        writeTextFile(
+            invalidPriceFile,
+            "id,name,type,segment,price,quantity\n"
+            "G01,Generator1,thermal,1,abc,50\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                invalidPriceFile,
+                generators,
+                errors);
+
+        check(
+            !ok,
+            "识别非法数字");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 负数申报电量
+        const QString negativeQuantityFile =
+            tempDir.path() +
+            "/negative_quantity.csv";
+
+        writeTextFile(
+            negativeQuantityFile,
+            "id,name,segment,price,quantity\n"
+            "C01,Consumer1,1,600,-20\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readConsumerBids(
+                negativeQuantityFile,
+                consumers,
+                errors);
+
+        check(
+            !ok,
+            "识别负数申报电量");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // CSV 列数错误
+        const QString columnErrorFile =
+            tempDir.path() +
+            "/column_error.csv";
+
+        writeTextFile(
+            columnErrorFile,
+            "id,name,type,segment,price,quantity\n"
+            "G01,Generator1,thermal,1,300\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                columnErrorFile,
+                generators,
+                errors);
+
+        check(
+            !ok,
+            "识别 CSV 列数错误");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 重复负荷时段
+        const QString duplicatePeriodFile =
+            tempDir.path() +
+            "/duplicate_period.csv";
+
+        writeTextFile(
+            duplicatePeriodFile,
+            "period,time,load\n"
+            "1,00:00,500\n"
+            "1,01:00,520\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readLoadCurve(
+                duplicatePeriodFile,
+                loadPoints,
+                errors);
+
+        check(
+            !ok,
+            "识别重复负荷时段");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 新能源重复时段
+        const QString duplicateRenewableFile =
+            tempDir.path() +
+            "/duplicate_renewable.csv";
+
+        writeTextFile(
+            duplicateRenewableFile,
+            "generator_id,generator_type,period,output\n"
+            "W01,wind,1,80\n"
+            "W01,wind,1,85\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readRenewableOutput(
+                duplicateRenewableFile,
+                renewable,
+                errors);
+
+        check(
+            !ok,
+            "识别新能源重复时段");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
     }
 
 
     qInfo().noquote()
-        << "========================================";
+        << "====================================";
 
+    if (failedTests == 0)
+    {
+        qInfo().noquote()
+        << "All DataReader tests passed.";
 
-    return
-        allPassed
-            ?
-            0
-            :
-            1;
+        return 0;
+    }
+
+    qCritical().noquote()
+        << failedTests
+        << "test(s) failed.";
+
+    return 1;
 }
