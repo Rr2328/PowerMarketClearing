@@ -5,12 +5,15 @@
 struct Generator//发电机报价
 {
     QString id;
+    QString name;
+    QString type;
     double price;
     double capacity;
     int segment=1;
 };
 struct Consumer//用户报价
 {
+    QString id;
     QString name;
     double price;
     double demand;
@@ -35,5 +38,18 @@ struct ClearResult//出清结果
     //double unmetDemand=0.0;
     //QString message;
 };
+enum class SettlementMode
+{
+    MCP,
+    PAB
+};
+struct SettlementItem
+{
+    QString id;
+    double volume=0;
+    double amount=0;
+};
+QVector<SettlementItem> settle(const ClearResult& clearresult,SettlementMode mode);
+
 ClearResult ClearMarket(QVector<Generator>generator,QVector<Consumer>consumer);
 #endif // CLEARING_ENGINE_H
