@@ -105,6 +105,10 @@ public:
         const DataFileSet &files,
         MarketData &data,
         QStringList &errors);
+
+    static bool validateRelations(
+        const MarketData &data,
+        QStringList &errors);
 };
 
 #endif // DATA_READER_H
