@@ -8,9 +8,9 @@
 #include "data/scenario_manager.h"
 
 // ------------------------------------------------------------------
-// 出清结果数据结构（界面消费的唯一接口，也是 B 位返工后的对齐边界）
-//   B 的 ClearingEngine 完成后：只需把 FakeEngine::clearPeriods 内部
-//   换成真实算法（或提供同名静态函数），界面与视角过滤零改动。
+// 出清结果数据结构（界面消费的唯一接口，也是与 B 位引擎的对齐边界）
+//   2026-09-02 起 FakeEngine 内部已接入 B 位真实引擎 ClearMarket
+//   （逐对撮合 + MCP/PAB 结算），界面与视角过滤零改动。
 // ------------------------------------------------------------------
 
 // 单个主体在某时段的成交明细（三视角过滤的核心数据源）
@@ -48,14 +48,13 @@ struct ClearingResult
 };
 
 // ------------------------------------------------------------------
-// 假引擎垫片（B 位算法完成前的过渡实现）
-//   目标：形态正确 + benchmark 对拍锚点（200 元/MWh / 140 MWh / 56000 元）
-//         + 逐主体明细完整，让界面从第一天起就按最终结构消费数据。
+// 引擎外壳：内部调用 B 位真实引擎（ClearMarket + MCP/PAB 结算）
+//   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
 // ------------------------------------------------------------------
 class FakeEngine
 {
 public:
-    // 一键演示：单时段基准对拍（预期出清价 200、成交 140、发电 28000 + 购电 28000）
+    // 一键演示：单时段基准出清
     static ClearingResult clearBenchmark(const MarketData &market, const QString &mode);
 
     // 开始仿真：逐时段连续出清（负荷双驼峰 + 新能源优先 + 申报按负荷缩放）
@@ -63,20 +62,10 @@ public:
                                        const MarketData &market, const QString &mode);
 
 private:
-    // 单个时段的撮合核心：输入该时段需求与新能源，输出 PeriodResult
+    // 单个时段的出清核心：构造真引擎入参 → ClearMarket → 聚合为 PeriodResult
     static PeriodResult clearOne(const MarketData &market, int period,
                                  const QString &time, double loadMW, double renewMW,
                                  double scale, const QString &mode);
-
-    // 发电侧：按报价升序逐段吸收需求，记录每段成交与收入
-    static void fillGenDetails(const MarketData &market, double demand,
-                               double scale, const QString &mode,
-                               PeriodResult &out);
-
-    // 购电侧：按报价降序逐段撮合（申报总量 = 负荷总量，A 已校验），记录每段费用
-    static void fillConDetails(const MarketData &market, double demand,
-                               double scale, const QString &mode,
-                               PeriodResult &out);
 };
 
 #endif // FAKE_ENGINE_H
