@@ -78,13 +78,23 @@ target_include_directories(DataReaderTest
         ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
 
+if(MSVC)
+    target_compile_options(
+        DataReaderTest
+        PRIVATE
+        /utf-8
+    )
+endif()
+
 
 # ScenarioManager 独立测试
 
 qt_add_executable(ScenarioManagerTest
     data/scenario_manager_test.cpp
+
     data/scenario_manager.cpp
     data/scenario_manager.h
+
     data/data_reader.cpp
     data/data_reader.h
 )
@@ -98,3 +108,42 @@ target_include_directories(ScenarioManagerTest
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
+
+if(MSVC)
+    target_compile_options(
+        ScenarioManagerTest
+        PRIVATE
+        /utf-8
+    )
+endif()
+
+
+# MarketData 集成测试
+
+qt_add_executable(MarketDataIntegrationTest
+    data/market_data_integration_test.cpp
+
+    data/data_reader.cpp
+    data/data_reader.h
+
+    data/scenario_manager.cpp
+    data/scenario_manager.h
+)
+
+target_link_libraries(MarketDataIntegrationTest
+    PRIVATE
+        Qt::Core
+)
+
+target_include_directories(MarketDataIntegrationTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/data
+)
+
+if(MSVC)
+    target_compile_options(
+        MarketDataIntegrationTest
+        PRIVATE
+        /utf-8
+    )
+endif()

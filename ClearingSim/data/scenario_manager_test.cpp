@@ -14,7 +14,6 @@ namespace
 
 int failedTests = 0;
 
-// 测试结果输出
 void check(
     bool condition,
     const QString &testName)
@@ -33,7 +32,7 @@ void check(
     }
 }
 
-// 查找项目根目录
+
 QString searchRepoRoot(
     const QString &startPath)
 {
@@ -42,7 +41,7 @@ QString searchRepoRoot(
     while (true)
     {
         if (dir.exists("ClearingSim") &&
-            dir.exists("data/samples"))
+            dir.exists("data/samples/scenario"))
         {
             return dir.absolutePath();
         }
@@ -56,7 +55,7 @@ QString searchRepoRoot(
     return QString();
 }
 
-// 自动定位项目根目录
+
 QString findRepoRoot()
 {
     QString root =
@@ -85,7 +84,7 @@ QString findRepoRoot()
         sourceFile.absolutePath());
 }
 
-// 输出错误信息
+
 void printErrors(
     const QStringList &errors)
 {
@@ -96,7 +95,7 @@ void printErrors(
     }
 }
 
-// 查找新能源数据
+
 bool findRenewable(
     const QVector<RenewableOutput> &data,
     const QString &generatorId,
@@ -128,37 +127,58 @@ int main(
         argv);
 
     qInfo().noquote()
-        << "========== ScenarioManager Test ==========";
+        << "========== ScenarioManager V1.2 Test ==========";
 
     const QString repoRoot =
         findRepoRoot();
 
     check(
         !repoRoot.isEmpty(),
-        "定位项目根目录");
+        "定位仓库根目录");
 
     if (repoRoot.isEmpty())
     {
         return 1;
     }
 
+    qInfo().noquote()
+        << "Repository root:"
+        << QDir::toNativeSeparators(
+               repoRoot);
+
+
+    const QString scenarioDir =
+        repoRoot +
+        "/data/samples/scenario";
+
+    check(
+        QDir(scenarioDir).exists(),
+        "定位 scenario 场景数据目录");
+
+    qInfo().noquote()
+        << "Scenario directory:"
+        << QDir::toNativeSeparators(
+               scenarioDir);
+
+
     DataFileSet files;
 
     files.generatorBidsFile =
-        repoRoot +
-        "/data/samples/benchmark/generator_bids.csv";
+        scenarioDir +
+        "/generator_bids.csv";
 
     files.consumerBidsFile =
-        repoRoot +
-        "/data/samples/benchmark/consumer_bids.csv";
+        scenarioDir +
+        "/consumer_bids.csv";
 
     files.loadCurveFile =
-        repoRoot +
-        "/data/samples/curves/load_curve.csv";
+        scenarioDir +
+        "/load_curve.csv";
 
     files.renewableOutputFile =
-        repoRoot +
-        "/data/samples/curves/renewable_output.csv";
+        scenarioDir +
+        "/renewable_output.csv";
+
 
     MarketData data;
     QStringList errors;
@@ -172,6 +192,24 @@ int main(
     check(
         ok,
         "读取场景基础数据");
+
+    if (!ok)
+    {
+        printErrors(errors);
+        return 1;
+    }
+
+
+    errors.clear();
+
+    ok =
+        DataReader::validateRelations(
+            data,
+            errors);
+
+    check(
+        ok,
+        "场景基础数据跨文件一致");
 
     if (!ok)
     {
@@ -259,7 +297,6 @@ int main(
     }
 
 
-    // 检查新能源首小时平均值
     if (!data.renewableOutputs.isEmpty())
     {
         const QString generatorId =
