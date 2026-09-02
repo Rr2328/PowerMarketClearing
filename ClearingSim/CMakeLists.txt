@@ -29,6 +29,16 @@ qt_add_executable(ClearingSim
 
     clearing_engine.h
     clearing_engine.cpp
+
+    core/perspective.h
+    core/app_session.h
+    core/fake_engine.h
+    core/fake_engine.cpp
+)
+
+target_include_directories(ClearingSim
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_link_libraries(ClearingSim
