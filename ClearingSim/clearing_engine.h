@@ -7,17 +7,17 @@ struct Generator//发电机报价
     QString id;
     QString name;
     QString type;
+    int segment=1;
     double price;
     double capacity;
-    int segment=1;
 };
 struct Consumer//用户报价
 {
     QString id;
     QString name;
+    int segment=1;//用户报价段区分
     double price;
     double demand;
-    int segment=1;//用户报价段区分
 };
 struct Trade
 {

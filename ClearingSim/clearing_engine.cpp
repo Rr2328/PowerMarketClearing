@@ -38,46 +38,7 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
         consumers[cindex].demand-=tradevolume;
         if(generators[gindex].capacity<=EPS)gindex++;
         if(consumers[cindex].demand<=EPS)cindex++;
-        /*if(generators[gindex].capacity+EPS<consumers[cindex].demand)
-        {
-            consumers[cindex].demand-=generators[gindex].capacity;
-            clearresult.totalvolume+=generators[gindex].capacity;
-            generators[gindex].capacity=0;
-            gindex++;
-        }
-        else if(qAbs(generators[gindex].capacity-consumers[cindex].demand) <= EPS)
-        {
-            consumers[cindex].demand-=generators[gindex].capacity;
-            clearresult.totalvolume+=generators[gindex].capacity;
-            generators[gindex].capacity=0;
-            gindex++;
-            cindex++;
-        }
-        else
-        {
-            generators[gindex].capacity-=consumers[cindex].demand;
-            clearresult.totalvolume+=consumers[cindex].demand;
-            consumers[cindex].demand=0;
-            cindex++;
-        }*/
     }
-    /*if(gindex<generators.size())
-    {
-        if(gindex==0&&cindex==0&&generators[gindex].capacity==volumn[gindex])
-        {
-            qDebug()<<"发电机报价均大于用户侧报价！";
-        }
-        else
-        {
-            if(generators[gindex].capacity!=volumn[gindex])clearresult.clearingprice=generators[gindex].price;
-            else clearresult.clearingprice=generators[gindex-1].price;
-        }
-    }
-    else
-    {
-        clearresult.clearingprice=generators[gindex-1].price;
-        if(cindex<=consumers.size()-1&&consumers[cindex].demand>EPS)qDebug()<<"用户侧还需要电！";
-    }*/
     clearresult.clearingprice=lastprice;
     return clearresult;
 }

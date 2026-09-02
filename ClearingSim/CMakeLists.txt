@@ -13,6 +13,13 @@ qt_add_executable(ClearingSim
     mainwindow.ui
     clearing_engine.h
     clearing_engine.cpp
+    market_runner.h
+    market_runner.cpp
+    data_reader.h
+    data_reader.cpp
+
+
+
 )
 
 target_link_libraries(ClearingSim
