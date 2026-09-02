@@ -1,30 +1,22 @@
 #include "core/fake_engine.h"
 
+#include "engine/clearing_engine.h"
+
+#include <QHash>
+
 #include <algorithm>
-#include <limits>
 
 // ============================================================
-// 假引擎实现说明（教学口径，可向老师解释）
-//   1) 新能源优先中标：该时段新能源出力先等额抵扣负荷，剩余为净负荷
-//   2) 发电侧按报价升序聚合，逐段吸收净负荷，最后一个吸收到的段报价=出清价
-//   3) 购电侧按报价降序聚合，与发电侧同一成交总量撮合（A 已校验双侧电量平衡）
-//   4) MCP：全场按出清价结算；PAB：各段按自己报价结算
-//   B 位真实引擎完成后，替换本文件内部实现即可（接口结构不变）
+// 引擎外壳（2026-09-02 起接入 B 位真实引擎）
+//   本文件是界面的"引擎外壳"：对外接口结构（ClearingResult /
+//   PeriodResult / EntityCleared）保持不变，内部已替换为 B 位
+//   真实出清引擎 ClearMarket（逐对撮合）+ MCP/PAB 双模式结算。
+//   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
 // ============================================================
 
 namespace {
 
-// 撮合用的段记录（排序后逐段吸收）
-struct Segment
-{
-    double qty = 0.0;      // 该段申报电量 × 缩放系数
-    double price = 0.0;    // 该段申报价
-    QString id;
-    QString name;
-    int seg = 0;
-};
-
-// 该时段新能源出力汇总（新能源优先中标，报 0 价全部吸收）
+// 该时段新能源出力汇总
 double sumRenewable(const QVector<RenewableOutput> &renewables)
 {
     double sum = 0.0;
@@ -36,19 +28,18 @@ double sumRenewable(const QVector<RenewableOutput> &renewables)
 } // namespace
 
 // ------------------------------------------------------------------
-// 一键演示：单时段基准对拍
-//   预期：出清价 200 元/MWh，成交 140 MWh，发电侧 28000 元 + 购电侧 28000 元
+// 一键演示：单时段基准出清（真引擎）
 // ------------------------------------------------------------------
 ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QString &mode)
 {
-    // 基准例无负荷曲线：需求 = 购电侧申报总量（A 已校验其 = 负荷总电量）
+    // 基准例无负荷曲线：需求 = 购电侧申报总量
     double demand = 0.0;
     for (const auto &c : market.consumerBids)
         demand += c.quantity;
 
     ClearingResult result;
     result.mode = mode;
-    result.sourceName = QStringLiteral("内置基准例（对拍锚点 200/140/56000）");
+    result.sourceName = QStringLiteral("内置基准例 · 真引擎出清");
 
     result.periods.append(
         clearOne(market, 1, QStringLiteral("全日"), demand, 0.0, 1.0, mode));
@@ -56,7 +47,7 @@ ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QStrin
 }
 
 // ------------------------------------------------------------------
-// 开始仿真：逐时段连续出清（24/96 时段）
+// 开始仿真：逐时段连续出清（真引擎）
 //   申报按「该时段负荷 ÷ 当日总量」缩放（对齐数据契约 3.4 口径）
 // ------------------------------------------------------------------
 ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios,
@@ -64,7 +55,7 @@ ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios
 {
     ClearingResult result;
     result.mode = mode;
-    result.sourceName = QStringLiteral("内置场景 · 逐时段连续仿真");
+    result.sourceName = QStringLiteral("内置场景 · 逐时段连续仿真（真引擎）");
 
     double loadTotal = 0.0;
     for (const auto &s : scenarios)
@@ -75,7 +66,6 @@ ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios
     for (const auto &s : scenarios) {
         const double scale = s.loadMW / loadTotal;          // 契约 3.4 缩放
         const double renew = sumRenewable(s.renewableBase); // 新能源优先
-        const double net = s.loadMW - renew;                // 净负荷
         result.periods.append(
             clearOne(market, s.period, s.time, s.loadMW, renew, scale, mode));
     }
@@ -83,7 +73,7 @@ ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios
 }
 
 // ------------------------------------------------------------------
-// 单时段撮合核心
+// 单时段出清核心：调用 B 位真引擎 ClearMarket，再聚合为界面结构
 // ------------------------------------------------------------------
 PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
                                   const QString &time, double loadMW, double renewMW,
@@ -95,115 +85,115 @@ PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
     out.loadMW = loadMW;
     out.renewMW = renewMW;
 
-    // 净需求（benchmark 传入 loadMW=demand、renewMW=0）
-    const double demand = loadMW - renewMW;
-
-    fillGenDetails(market, demand, scale, mode, out);
-    fillConDetails(market, out.clearedMW, scale, mode, out);
-    return out;
-}
-
-// ------------------------------------------------------------------
-// 发电侧：报价升序逐段吸收，边际段报价 = 出清价
-// ------------------------------------------------------------------
-void FakeEngine::fillGenDetails(const MarketData &market, double demand,
-                                double scale, const QString &mode, PeriodResult &out)
-{
-    QVector<Segment> segs;
+    // ---- 构造真引擎入参：发电侧（新能源 = 0 价供给段，优先中标） ----
+    QVector<Generator> generators;
+    if (renewMW > 0.0) {
+        Generator r;
+        r.id = QStringLiteral("RENEW");
+        r.name = QStringLiteral("新能源出力");
+        r.type = QStringLiteral("NEW");
+        r.price = 0.0;
+        r.capacity = renewMW;
+        r.segment = 0;
+        generators.append(r);
+    }
     for (const auto &g : market.generatorBids) {
-        Segment s;
-        s.qty = g.quantity * scale;
-        s.price = g.price;
-        s.id = g.id;
-        s.name = g.name;
-        s.seg = g.segment;
-        segs.append(s);
-    }
-    std::sort(segs.begin(), segs.end(),
-              [](const Segment &a, const Segment &b) { return a.price < b.price; });
-
-    double remaining = demand;
-    double clearingPrice = 0.0;
-
-    // 第一遍：逐段吸收，确定边际价与各段成交
-    for (auto &s : segs) {
-        if (remaining <= 0.0)
-            break;
-        const double take = std::min(s.qty, remaining);
-        if (take <= 0.0)
-            continue;
-        s.qty = take;                       // 覆写为实际成交
-        clearingPrice = s.price;            // 最后一个吸收到的段报价
-        remaining -= take;
-    }
-    if (demand <= 0.0)
-        clearingPrice = 0.0;
-
-    // 第二遍：按 MCP / PAB 口径记账
-    double fee = 0.0, cleared = 0.0;
-    for (const auto &s : segs) {
-        if (s.qty <= 0.0)
-            continue;
-        const double money = (mode == QStringLiteral("PAB"))
-                                 ? s.price * s.qty
-                                 : clearingPrice * s.qty;
-        EntityCleared e;
-        e.id = s.id;
-        e.name = s.name;
-        e.segment = s.seg;
-        e.bidPrice = s.price;
-        e.clearedMW = s.qty;
-        e.money = money;
-        out.genDetails.append(e);
-        fee += money;
-        cleared += s.qty;
+        Generator e;
+        e.id = g.id;
+        e.name = g.name;
+        e.type = g.type;
+        e.price = g.price;
+        e.capacity = g.quantity * scale;
+        e.segment = g.segment;
+        generators.append(e);
     }
 
-    out.clearingPrice = clearingPrice;
-    out.clearedMW = cleared;
-    out.genFee = fee;
-}
-
-// ------------------------------------------------------------------
-// 购电侧：报价降序撮合（出价高的用户优先中标），与发电侧同成交量
-// ------------------------------------------------------------------
-void FakeEngine::fillConDetails(const MarketData &market, double demand,
-                                double scale, const QString &mode, PeriodResult &out)
-{
-    QVector<Segment> segs;
+    // ---- 购电侧：按契约 3.4 缩放 ----
+    QVector<Consumer> consumers;
     for (const auto &c : market.consumerBids) {
-        Segment s;
-        s.qty = c.quantity * scale;
-        s.price = c.price;
-        s.id = c.id;
-        s.name = c.name;
-        s.seg = c.segment;
-        segs.append(s);
+        Consumer e;
+        e.id = c.id;
+        e.name = c.name;
+        e.price = c.price;
+        e.demand = c.quantity * scale;
+        e.segment = c.segment;
+        consumers.append(e);
     }
-    std::sort(segs.begin(), segs.end(),
-              [](const Segment &a, const Segment &b) { return a.price > b.price; });
 
-    double remaining = demand;
-    double fee = 0.0;
-    for (auto &s : segs) {
-        if (remaining <= 0.0)
-            break;
-        const double take = std::min(s.qty, remaining);
-        if (take <= 0.0)
+    // ---- 调用 B 位真引擎：逐对撮合出清 ----
+    const ClearResult cr = ClearMarket(generators, consumers);
+    const bool pab = (mode == QStringLiteral("PAB"));
+
+    out.clearingPrice = cr.clearingprice;
+    out.clearedMW = cr.totalvolume;
+
+    // ---- 逐段明细：从 Trade 聚合，结算口径与 B 位 settle() 一致 ----
+    //   发电侧：MCP 按出清价结算、PAB 按各段申报价结算
+    //   购电侧：统一按出清价结算（与 settle() 现行口径一致）
+    QHash<QString, EntityCleared> genMap, conMap;
+    for (const auto &t : cr.trade) {
+        if (t.volume <= 0.0)
             continue;
-        const double money = (mode == QStringLiteral("PAB"))
-                                 ? s.price * take
-                                 : out.clearingPrice * take;
-        EntityCleared e;
-        e.id = s.id;
-        e.name = s.name;
-        e.segment = s.seg;
-        e.bidPrice = s.price;
-        e.clearedMW = take;
-        e.money = money;
-        out.conDetails.append(e);
-        fee += money;
-        remaining -= take;
+
+        const QString gk = t.generatorID + QLatin1Char('#')
+                           + QString::number(t.generatorseg);
+        EntityCleared &ge = genMap[gk];
+        ge.id = t.generatorID;
+        ge.segment = t.generatorseg;
+        ge.bidPrice = t.generatorprice;
+        ge.clearedMW += t.volume;
+        ge.money += pab ? t.volume * t.generatorprice
+                        : t.volume * cr.clearingprice;
+
+        const QString ck = t.consumerID + QLatin1Char('#')
+                           + QString::number(t.consumerseg);
+        EntityCleared &ce = conMap[ck];
+        ce.id = t.consumerID;
+        ce.segment = t.consumerseg;
+        ce.bidPrice = t.consumerprice;
+        ce.clearedMW += t.volume;
+        ce.money += t.volume * cr.clearingprice;
     }
-    out.conFee = fee;
+
+    // 补充主体名称（Trade 不带 name，从申报数据回填）
+    for (auto &e : genMap) {
+        if (e.id == QStringLiteral("RENEW")) {
+            e.name = QStringLiteral("新能源出力");
+            continue;
+        }
+        for (const auto &g : market.generatorBids) {
+            if (g.id == e.id) {
+                e.name = g.name;
+                break;
+            }
+        }
+    }
+    for (auto &e : conMap) {
+        for (const auto &c : market.consumerBids) {
+            if (c.id == e.id) {
+                e.name = c.name;
+                break;
+            }
+        }
+    }
+
+    out.genDetails = genMap.values();
+    out.conDetails = conMap.values();
+
+    // 展示排序：发电侧按报价升序、购电侧按报价降序
+    std::sort(out.genDetails.begin(), out.genDetails.end(),
+              [](const EntityCleared &a, const EntityCleared &b) {
+                  return a.bidPrice < b.bidPrice;
+              });
+    std::sort(out.conDetails.begin(), out.conDetails.end(),
+              [](const EntityCleared &a, const EntityCleared &b) {
+                  return a.bidPrice > b.bidPrice;
+              });
+
+    for (const auto &e : out.genDetails)
+        out.genFee += e.money;
+    for (const auto &e : out.conDetails)
+        out.conFee += e.money;
+
+    return out;
 }

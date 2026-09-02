@@ -10,6 +10,7 @@ class QComboBox;
 class QLabel;
 class QListWidget;
 class QLineSeries;
+class QScatterSeries;
 class QPushButton;
 class QStackedWidget;
 class QTableWidget;
@@ -95,6 +96,7 @@ private:
     QLineSeries    *m_supplySeries = nullptr;   // 供需交叉图：供给阶梯（真申报）
     QLineSeries    *m_demandSeries = nullptr;   // 供需交叉图：需求阶梯（真申报）
     QLineSeries    *m_clearingLine = nullptr;   // 供需交叉图：出清价水平线
+    QScatterSeries *m_clearPoint   = nullptr;   // 供需交叉图：出清点标记（成交×出清价）
     QValueAxis     *m_axisSupplyX  = nullptr;   // 供需图 X（累计电量）
     QValueAxis     *m_axisSupplyY  = nullptr;   // 供需图 Y（报价）
     QValueAxis     *m_axisPriceX   = nullptr;   // 分时电价 X（时段）

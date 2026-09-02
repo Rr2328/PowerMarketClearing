@@ -27,8 +27,8 @@ qt_add_executable(ClearingSim
     data/scenario_manager.h
     data/scenario_manager.cpp
 
-    clearing_engine.h
-    clearing_engine.cpp
+    engine/clearing_engine.h
+    engine/clearing_engine.cpp
 
     core/perspective.h
     core/app_session.h

@@ -39,6 +39,7 @@
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
 #include <QtCharts/QLineSeries>
+#include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 
 #include "core/fake_engine.h"
@@ -72,7 +73,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     auto *demoBtn = new QPushButton(QStringLiteral("⚡ 一键演示"));
     demoBtn->setObjectName("outlineDemoBtn");
-    demoBtn->setToolTip(QStringLiteral("加载内置基准例（G1 150/100 · G2 200/100），单时段对拍出清：200 元/MWh / 140 MWh / 56000 元"));
+    demoBtn->setToolTip(QStringLiteral("加载内置基准例（G1 100/40 · G2 250/60），单时段对拍出清：250 元/MWh / 50 MWh / 12500 元"));
     connect(demoBtn, &QPushButton::clicked, this, &MainWindow::onStartDemo);
 
     auto *topRight = new QVBoxLayout();
@@ -148,7 +149,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setCentralWidget(m_rootStack);
 
-    statusBar()->showMessage(QStringLiteral("就绪 · 数据接入 A 模块 · 出清暂用假引擎（B 位算法接入后替换）"));
+    statusBar()->showMessage(QStringLiteral("就绪 · 数据接入 A 模块 · 出清已接 B 位真实算法（MCP/PAB 双模式）"));
 
     applyStyle();
 }
@@ -679,10 +680,22 @@ QWidget *MainWindow::buildChartPage()
         m_clearingLine = new QLineSeries();
         m_clearingLine->setName(QStringLiteral("出清价"));
         m_clearingLine->setColor(QColor(0xEF, 0x9F, 0x27));
+        {
+            QPen pen(QColor(0xEF, 0x9F, 0x27));
+            pen.setWidth(2);
+            pen.setStyle(Qt::DashLine);
+            m_clearingLine->setPen(pen);
+        }
+
+        m_clearPoint = new QScatterSeries();
+        m_clearPoint->setName(QStringLiteral("出清点"));
+        m_clearPoint->setColor(QColor(0xC0, 0x39, 0x2B));
+        m_clearPoint->setMarkerSize(11.0);
 
         chart->addSeries(m_supplySeries);
         chart->addSeries(m_demandSeries);
         chart->addSeries(m_clearingLine);
+        chart->addSeries(m_clearPoint);
 
         m_axisSupplyX = new QValueAxis();
         m_axisSupplyX->setRange(0, 400);
@@ -699,6 +712,8 @@ QWidget *MainWindow::buildChartPage()
         m_demandSeries->attachAxis(m_axisSupplyY);
         m_clearingLine->attachAxis(m_axisSupplyX);
         m_clearingLine->attachAxis(m_axisSupplyY);
+        m_clearPoint->attachAxis(m_axisSupplyX);
+        m_clearPoint->attachAxis(m_axisSupplyY);
 
         chart->setTitle(QStringLiteral("供需曲线交叉 → 出清电价（机制可视化）"));
         chart->legend()->setAlignment(Qt::AlignBottom);
@@ -1369,6 +1384,8 @@ void MainWindow::refreshChartPage()
         m_supplySeries->clear();
         m_demandSeries->clear();
         m_clearingLine->clear();
+        if (m_clearPoint)
+            m_clearPoint->clear();
 
         struct Step { double qty; double price; };
         QVector<Step> gen;
@@ -1387,36 +1404,53 @@ void MainWindow::refreshChartPage()
         for (const auto &s : gen) maxPrice = std::max(maxPrice, s.price);
         for (const auto &s : con) maxPrice = std::max(maxPrice, s.price);
 
-        m_supplySeries->append(0.0, 0.0);
+        // 供给阶梯：每段画一条水平线（价格=该段申报价），段与段之间竖直跳变。
+        //   从第一段报价起画（不从原点 0,0 出发）：每个申报段补两个点 = 水平线起点 + 终点，
+        //   下一段的起点与前一段终点自动连成竖直跳变线，形成标准阶梯图。
         for (const auto &s : gen) {
+            m_supplySeries->append(cumG, s.price);
             cumG += s.qty;
             m_supplySeries->append(cumG, s.price);
         }
-        m_demandSeries->append(0.0, 0.0);
+        // 需求阶梯：按报价降序，同样每段一条水平线
         for (const auto &s : con) {
+            m_demandSeries->append(cumC, s.price);
             cumC += s.qty;
             m_demandSeries->append(cumC, s.price);
         }
         const double maxX = std::max(cumG, cumC) * 1.05;
 
-        // 出清价水平线（取首时段出清价；基准例只有一个时段）
+        // 出清价水平线 + 出清点标记（取首时段出清结果；基准例只有一个时段）
         const double cp = periods.isEmpty() ? 0.0 : periods[0].clearingPrice;
         if (cp > 0.0) {
             m_clearingLine->append(0.0, cp);
             m_clearingLine->append(maxX, cp);
+        }
+        if (m_clearPoint) {
+            const double cv = periods.isEmpty() ? 0.0 : periods[0].clearedMW;
+            if (cp > 0.0 && cv > 0.0)
+                m_clearPoint->append(cv, cp);
         }
 
         // 视角过滤：发电只看供给，购电只看需求，平台全看
         m_supplySeries->setVisible(p != Perspective::Con);
         m_demandSeries->setVisible(p != Perspective::Gen);
         m_clearingLine->setVisible(p == Perspective::Platform);
+        if (m_clearPoint)
+            m_clearPoint->setVisible(p == Perspective::Platform);
 
         if (m_axisSupplyX) {
-            m_axisSupplyX->setRange(0.0, std::max(1.0, maxX));
-            m_axisSupplyX->setTickCount(7);
+            const double xMax = std::ceil(std::max(100.0, maxX) / 25.0) * 25.0;
+            m_axisSupplyX->setRange(0.0, xMax);
+            m_axisSupplyX->setTickCount(static_cast<int>(xMax / 25.0) + 1);
+            m_axisSupplyX->setLabelFormat(QStringLiteral("%d"));
         }
-        if (m_axisSupplyY)
-            m_axisSupplyY->setRange(0.0, std::max(100.0, maxPrice * 1.15));
+        if (m_axisSupplyY) {
+            const double yMax = std::ceil(std::max(100.0, maxPrice * 1.15) / 100.0) * 100.0;
+            m_axisSupplyY->setRange(0.0, yMax);
+            m_axisSupplyY->setTickCount(static_cast<int>(yMax / 100.0) + 1);
+            m_axisSupplyY->setLabelFormat(QStringLiteral("%d"));
+        }
     }
 }
 
@@ -1512,7 +1546,7 @@ void MainWindow::onStartDemo()
     if (!loadDataFiles(dir + QStringLiteral("/benchmark/generator_bids.csv"),
                        dir + QStringLiteral("/benchmark/consumer_bids.csv"),
                        QString(), QString(),
-                       QStringLiteral("内置基准例（对拍锚点 200/140/56000）")))
+                       QStringLiteral("内置基准例（对拍锚点 250/50/12500）")))
         return;
 
     const QString mode = (m_btnPab && m_btnPab->isChecked())
@@ -1521,8 +1555,16 @@ void MainWindow::onStartDemo()
     m_session.hasResult = true;
     setHasResult(true);
     m_nav->setCurrentRow(2);
+
+    // 状态栏展示实际模式与真实结算金额（PAB 下发电收入应明显低于 MCP）
+    const auto &pr = m_session.result.periods.first();
     statusBar()->showMessage(
-        QStringLiteral("一键演示完成：MCP 出清价 200 元/MWh、成交 140 MWh、结算合计 56000 元（与数据契约对拍锚点一致）"),
+        QStringLiteral("一键演示完成：%1 模式 · 出清价 %2 元/MWh · 成交 %3 MWh · 发电收入 %4 元 / 购电费用 %5 元（购电侧统一按出清价结算；MCP 对拍锚点：250 / 50 / 12500）")
+            .arg(mode)
+            .arg(pr.clearingPrice, 0, 'f', 0)
+            .arg(pr.clearedMW, 0, 'f', 0)
+            .arg(pr.genFee, 0, 'f', 0)
+            .arg(pr.conFee, 0, 'f', 0),
         8000);
 }
 
