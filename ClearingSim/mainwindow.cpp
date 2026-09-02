@@ -26,6 +26,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QListWidgetItem>
+#include <QTime>
 #include <QPushButton>
 #include <QSlider>
 #include <QStackedWidget>
@@ -347,11 +348,39 @@ QWidget *MainWindow::buildImportPage()
 
     m_importTabs = new QTabWidget(bidBox);
 
-    m_genTable = new QTableWidget(0, 6, bidBox);
+    // #89：交易时段选择行（96 期原生粒度，编辑/预填都针对单时段）
+    auto *periodRow = new QHBoxLayout();
+    auto *periodLbl = new QLabel(QStringLiteral("交易时段："), bidBox);
+    m_periodCombo = new QComboBox(bidBox);
+    for (int t = 1; t <= 96; ++t) {
+        const int from = (t - 1) * 15, to = t * 15;
+        m_periodCombo->addItem(QStringLiteral("%1 · %2–%3")
+                                   .arg(t, 2, 10, QChar('0'))
+                                   .arg(QTime(0, 0).addSecs(from * 60).toString(QStringLiteral("HH:mm")))
+                                   .arg(QTime(0, 0).addSecs(to * 60).toString(QStringLiteral("HH:mm"))));
+    }
+    m_periodCombo->setToolTip(QStringLiteral(
+        "V1.3 原生粒度 96 期（15 分钟/期）：选择时段后，下方申报表只显示该时段的申报，编辑即写回该时段"));
+    auto *prefillBtn = new QPushButton(QStringLiteral("⚡ 按负荷预填本时段"), bidBox);
+    prefillBtn->setObjectName("secondaryBtn");
+    prefillBtn->setToolTip(QStringLiteral(
+        "按负荷曲线形状预填当前时段：购电/发电申报量同乘 负荷(t)/平均负荷（保持供需结构，需已加载负荷曲线）"));
+    m_periodHint = new QLabel(bidBox);
+    m_periodHint->setObjectName("paramSummary");
+    periodRow->addWidget(periodLbl);
+    periodRow->addWidget(m_periodCombo, 0, Qt::AlignVCenter);
+    periodRow->addWidget(prefillBtn);
+    periodRow->addStretch();
+    periodRow->addWidget(m_periodHint);
+    connect(m_periodCombo, &QComboBox::currentIndexChanged,
+            this, &MainWindow::onEditPeriodChanged);
+    connect(prefillBtn, &QPushButton::clicked,
+            this, &MainWindow::onPrefillByLoad);
+
+    m_genTable = new QTableWidget(0, 5, bidBox);
     m_genTable->setHorizontalHeaderLabels({
         QStringLiteral("电厂名称"),
         QStringLiteral("机组编号"),
-        QStringLiteral("时段"),
         QStringLiteral("申报段"),
         QStringLiteral("申报电价 (元/MWh)"),
         QStringLiteral("申报电量 (MWh)"),
@@ -362,11 +391,10 @@ QWidget *MainWindow::buildImportPage()
                                 | QAbstractItemView::AnyKeyPressed);
     m_genTable->setAlternatingRowColors(true);
 
-    m_conTable = new QTableWidget(0, 6, bidBox);
+    m_conTable = new QTableWidget(0, 5, bidBox);
     m_conTable->setHorizontalHeaderLabels({
         QStringLiteral("用户名称"),
         QStringLiteral("负荷编号"),
-        QStringLiteral("时段"),
         QStringLiteral("申报段"),
         QStringLiteral("申报电价 (元/MWh)"),
         QStringLiteral("申报电量 (MWh)"),
@@ -404,6 +432,7 @@ QWidget *MainWindow::buildImportPage()
     btnRow->addStretch();
 
     auto *bidLay = new QVBoxLayout(bidBox);
+    bidLay->addLayout(periodRow);
     bidLay->addWidget(m_importTabs);
     bidLay->addLayout(btnRow);
 
@@ -768,7 +797,28 @@ QWidget *MainWindow::buildChartPage()
         auto *view = new QChartView(chart);
         view->setRenderHint(QPainter::Antialiasing);
 
+        // #89：交易时段下拉（96 期原生粒度；与 P2 渗透率滑块联动，拖滑块后即时重绘）
+        m_chartPeriodCombo = new QComboBox(box);
+        for (int t = 1; t <= 96; ++t) {
+            const int from = (t - 1) * 15, to = t * 15;
+            m_chartPeriodCombo->addItem(QStringLiteral("%1 · %2–%3")
+                                            .arg(t, 2, 10, QChar('0'))
+                                            .arg(QTime(0, 0).addSecs(from * 60).toString(QStringLiteral("HH:mm")))
+                                            .arg(QTime(0, 0).addSecs(to * 60).toString(QStringLiteral("HH:mm"))));
+        }
+        m_chartPeriodCombo->setToolTip(QStringLiteral(
+            "选择要查看的时段截面：供给阶梯（含渗透率换算的新能源 0 价段）× 需求阶梯 → 边际出清点"));
+        auto *chartPeriodRow = new QHBoxLayout();
+        auto *cpLbl = new QLabel(QStringLiteral("交易时段："), box);
+        chartPeriodRow->addWidget(cpLbl);
+        chartPeriodRow->addWidget(m_chartPeriodCombo);
+        chartPeriodRow->addStretch();
+        connect(m_chartPeriodCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+            refreshChartPage();   // 截面切换只重绘图表，不重算
+        });
+
         auto *lay = new QVBoxLayout(box);
+        lay->addLayout(chartPeriodRow);
         lay->addWidget(view);
         tabs->addTab(box, QStringLiteral("供需交叉图"));
     }
@@ -1193,37 +1243,82 @@ void MainWindow::refreshImportPage()
         return it;
     };
 
-    // 发电侧申报表（V1.3 长表：含时段列；#89 将改为单时段视图 + 时段选择器）
+    // 发电侧申报表（#89 单时段视图：只显示 m_editPeriod 时段；时段列隐藏，
+    //   电价/电量 item 带 UserRole 源索引，编辑写回用）
     if (m_genTable) {
         const auto &gs = m_session.market.generatorBids;
         m_loadingBids = true;                 // 填充期间屏蔽 itemChanged（防递归）
-        m_genTable->setRowCount(gs.size());
+        m_genTable->setRowCount(0);
+        int row = 0;
         for (int i = 0; i < gs.size(); ++i) {
             const auto &g = gs[i];
-            m_genTable->setItem(i, 0, lockedItem(g.name));
-            m_genTable->setItem(i, 1, lockedItem(g.id));
-            m_genTable->setItem(i, 2, lockedItem(QString::number(g.period)));
-            m_genTable->setItem(i, 3, lockedItem(QString::number(g.segment)));
-            m_genTable->setItem(i, 4, new QTableWidgetItem(QString::number(g.price, 'f', 1)));
-            m_genTable->setItem(i, 5, new QTableWidgetItem(QString::number(g.quantity, 'f', 1)));
+            if (g.period > 0 && g.period != m_editPeriod)
+                continue;
+            m_genTable->insertRow(row);
+            m_genTable->setItem(row, 0, lockedItem(g.name));
+            m_genTable->setItem(row, 1, lockedItem(g.id));
+            m_genTable->setItem(row, 2, lockedItem(QString::number(g.segment)));
+            auto *priceItem = new QTableWidgetItem(QString::number(g.price, 'f', 1));
+            priceItem->setData(Qt::UserRole, i);
+            auto *qtyItem = new QTableWidgetItem(QString::number(g.quantity, 'f', 1));
+            qtyItem->setData(Qt::UserRole, i);
+            m_genTable->setItem(row, 3, priceItem);
+            m_genTable->setItem(row, 4, qtyItem);
+            ++row;
         }
         m_loadingBids = false;
     }
-    // 购电侧申报表（V1.3 长表：含时段列）
+    // 购电侧申报表（#89 单时段视图，同上）
     if (m_conTable) {
         const auto &cs = m_session.market.consumerBids;
         m_loadingBids = true;
-        m_conTable->setRowCount(cs.size());
+        m_conTable->setRowCount(0);
+        int row = 0;
         for (int i = 0; i < cs.size(); ++i) {
             const auto &c = cs[i];
-            m_conTable->setItem(i, 0, lockedItem(c.name));
-            m_conTable->setItem(i, 1, lockedItem(c.id));
-            m_conTable->setItem(i, 2, lockedItem(QString::number(c.period)));
-            m_conTable->setItem(i, 3, lockedItem(QString::number(c.segment)));
-            m_conTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.price, 'f', 1)));
-            m_conTable->setItem(i, 5, new QTableWidgetItem(QString::number(c.quantity, 'f', 1)));
+            if (c.period > 0 && c.period != m_editPeriod)
+                continue;
+            m_conTable->insertRow(row);
+            m_conTable->setItem(row, 0, lockedItem(c.name));
+            m_conTable->setItem(row, 1, lockedItem(c.id));
+            m_conTable->setItem(row, 2, lockedItem(QString::number(c.segment)));
+            auto *priceItem = new QTableWidgetItem(QString::number(c.price, 'f', 1));
+            priceItem->setData(Qt::UserRole, i);
+            auto *qtyItem = new QTableWidgetItem(QString::number(c.quantity, 'f', 1));
+            qtyItem->setData(Qt::UserRole, i);
+            m_conTable->setItem(row, 3, priceItem);
+            m_conTable->setItem(row, 4, qtyItem);
+            ++row;
         }
         m_loadingBids = false;
+    }
+
+    // #89：本时段供需概览（购电申报总量 / 负荷曲线 / 发电可用）
+    if (m_periodHint) {
+        if (!m_session.hasData) {
+            m_periodHint->setText(QString());
+        } else {
+            double conSum = 0.0, genSum = 0.0;
+            for (const auto &c : m_session.market.consumerBids)
+                if (c.period == m_editPeriod || c.period <= 0)
+                    conSum += c.quantity;
+            for (const auto &g : m_session.market.generatorBids)
+                if (g.period == m_editPeriod || g.period <= 0)
+                    genSum += g.quantity;
+            QString loadTxt = QStringLiteral("—");
+            for (const auto &lp : m_session.market.loadCurve) {
+                if (lp.period == m_editPeriod) {
+                    loadTxt = QStringLiteral("%1 MW").arg(lp.load, 0, 'f', 1);
+                    break;
+                }
+            }
+            m_periodHint->setText(QStringLiteral(
+                                      "第 %1 时段：购电申报 %2 MW · 发电申报 %3 MW · 负荷曲线 %4")
+                                      .arg(m_editPeriod)
+                                      .arg(conSum, 0, 'f', 1)
+                                      .arg(genSum, 0, 'f', 1)
+                                      .arg(loadTxt));
+        }
     }
 
     // 数据集状态卡（发电/购电两表；新能源由 P2 滑块控制）
@@ -1278,19 +1373,20 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     const bool isGen = (tbl == m_genTable);
     if (!isGen && tbl != m_conTable)
         return;
-    const int row = item->row();
     const int col = item->column();
-    // 两表列结构一致（V1.3）：…时段/申报段/电价(4)/电量(5)
-    const int priceCol = 4;
-    const int qtyCol   = 5;
+    // 两表列结构一致（#89 单时段视图）：名称/编号/申报段/电价(3)/电量(4)
+    const int priceCol = 3;
+    const int qtyCol   = 4;
     if (col != priceCol && col != qtyCol)
         return;
+    // #89：单时段视图按 UserRole 源索引定位（表格行 ≠ bids 下标）
+    const int srcIdx = item->data(Qt::UserRole).toInt();
 
     // 两种申报结构都有 price/quantity 字段，用泛型 lambda 统一处理
     const auto handle = [&](auto &bids) {
-        if (row < 0 || row >= bids.size())
+        if (srcIdx < 0 || srcIdx >= bids.size())
             return;
-        auto &bid = bids[row];
+        auto &bid = bids[srcIdx];
 
         const double oldVal = (col == priceCol) ? bid.price : bid.quantity;
         const auto revert = [this, item, oldVal]() {
@@ -1333,13 +1429,10 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         // 已有出清结果 → 立即重算并刷新各页
         if (m_session.hasResult && m_session.hasData) {
             rerunIfReady();
-            // 需求总量按单时段统计（V1.3 逐时段申报；窄表展开后各时段同量）
-            const int demandPeriod = m_session.market.consumerBids.isEmpty()
-                                         ? 1
-                                         : m_session.market.consumerBids.first().period;
+            // 需求总量按当前编辑时段统计（#89 单时段视图）
             double demand = 0.0;
             for (const auto &c : m_session.market.consumerBids)
-                if (c.period == demandPeriod || c.period <= 0)
+                if (c.period == m_editPeriod || c.period <= 0)
                     demand += c.quantity;
             const auto &pr = m_session.result.periods.isEmpty()
                                  ? PeriodResult() : m_session.result.periods.first();
@@ -1358,6 +1451,75 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         handle(m_session.market.generatorBids);
     else
         handle(m_session.market.consumerBids);
+}
+
+// ============================================================
+// #89 P1：交易时段切换 → 单时段小表刷新（不重算，只换视图）
+// ============================================================
+void MainWindow::onEditPeriodChanged(int index)
+{
+    if (index < 0)
+        return;
+    m_editPeriod = index + 1;
+    refreshImportPage();
+}
+
+// ============================================================
+// #89 P1：按负荷曲线预填当前时段申报量
+//   购电/发电申报量同乘 负荷(t)/平均负荷（供需结构保持，
+//   逐时段供需平衡态不被破坏），申报价不动
+// ============================================================
+void MainWindow::onPrefillByLoad()
+{
+    const auto &lc = m_session.market.loadCurve;
+    if (lc.isEmpty()) {
+        statusBar()->showMessage(
+            QStringLiteral("预填失败：未加载负荷曲线（内置场景样例自带 curves/；自定义导入请把 load_curve.csv 放在同目录）"), 8000);
+        return;
+    }
+    double loadT = 0.0, sum = 0.0;
+    int hit = 0;
+    for (const auto &lp : lc) {
+        sum += lp.load;
+        if (lp.period == m_editPeriod) {
+            loadT = lp.load;
+            ++hit;
+        }
+    }
+    if (hit == 0 || sum <= 0.0) {
+        statusBar()->showMessage(
+            QStringLiteral("预填失败：负荷曲线缺少第 %1 时段的数据").arg(m_editPeriod), 8000);
+        return;
+    }
+    const double avg = sum / lc.size();
+    const double factor = loadT / avg;
+
+    int nCon = 0, nGen = 0;
+    for (auto &c : m_session.market.consumerBids) {
+        if (c.period == m_editPeriod || c.period <= 0) {
+            c.quantity *= factor;
+            ++nCon;
+        }
+    }
+    for (auto &g : m_session.market.generatorBids) {
+        if (g.period == m_editPeriod || g.period <= 0) {
+            g.quantity *= factor;
+            ++nGen;
+        }
+    }
+
+    refreshImportPage();
+    if (m_session.hasResult && m_session.hasData)
+        rerunIfReady();
+    statusBar()->showMessage(
+        QStringLiteral("已按负荷预填第 %1 时段：负荷 %2 MW / 日均 %3 MW（×%4），购电 %5 条 · 发电 %6 条申报已缩放")
+            .arg(m_editPeriod)
+            .arg(loadT, 0, 'f', 1)
+            .arg(avg, 0, 'f', 1)
+            .arg(factor, 0, 'f', 3)
+            .arg(nCon)
+            .arg(nGen),
+        8000);
 }
 
 // 校验汇总条（导入与编辑共用）
@@ -1593,8 +1755,9 @@ void MainWindow::refreshChartPage()
             m_clearPoint->clear();
 
         struct Step { double qty; double price; };
-        // 时段截面（V1.3 逐时段申报）：取首时段出清结果对应的申报截面
-        const int chartPeriod = periods.isEmpty() ? 1 : periods[0].period;
+        // 时段截面（#89：下拉选择；默认 1）。0 量段（停机申报）不画——与引擎入参口径一致
+        const int chartPeriod = m_chartPeriodCombo
+                                    ? m_chartPeriodCombo->currentIndex() + 1 : 1;
         QVector<Step> gen;
         // 供给 = 渗透率换算的 RENEW（0 价，与撮合同式）+ 该时段常规机组申报
         const double renewCap = ClearingFacade::renewCapacityAt(
@@ -1604,6 +1767,8 @@ void MainWindow::refreshChartPage()
         for (const auto &g : m_session.market.generatorBids) {
             if (g.period > 0 && g.period != chartPeriod)
                 continue;
+            if (g.quantity <= 0.0)
+                continue;   // 0 量段不进引擎，也不画阶梯
             gen.append({g.quantity, g.price});
         }
         std::sort(gen.begin(), gen.end(),
@@ -1612,6 +1777,8 @@ void MainWindow::refreshChartPage()
         QVector<Step> con;
         for (const auto &c : m_session.market.consumerBids) {
             if (c.period > 0 && c.period != chartPeriod)
+                continue;
+            if (c.quantity <= 0.0)
                 continue;
             con.append({c.quantity, c.price});
         }
@@ -1638,14 +1805,25 @@ void MainWindow::refreshChartPage()
         }
         const double maxX = std::max(cumG, cumC) * 1.05;
 
-        // 出清价水平线 + 出清点标记（取首时段出清结果；基准例只有一个时段）
-        const double cp = periods.isEmpty() ? 0.0 : periods[0].clearingPrice;
+        // 出清价水平线 + 出清点标记（#89：按所选时段映射出清结果；
+        //   24 期聚合视图时，15 分钟截面映射到所在小时的聚合时段）
+        const PeriodResult *pr = nullptr;
+        for (const auto &p : periods)
+            if (p.period == chartPeriod) { pr = &p; break; }
+        if (!pr && periods.size() == 24) {
+            const int hourIdx = (chartPeriod - 1) / 4 + 1;
+            for (const auto &p : periods)
+                if (p.period == hourIdx) { pr = &p; break; }
+        }
+        if (!pr && !periods.isEmpty())
+            pr = &periods.first();
+        const double cp = pr ? pr->clearingPrice : 0.0;
         if (cp > 0.0) {
             m_clearingLine->append(0.0, cp);
             m_clearingLine->append(maxX, cp);
         }
         if (m_clearPoint) {
-            const double cv = periods.isEmpty() ? 0.0 : periods[0].clearedMW;
+            const double cv = pr ? pr->clearedMW : 0.0;
             if (cp > 0.0 && cv > 0.0)
                 m_clearPoint->append(cv, cp);
         }
@@ -1878,9 +2056,18 @@ void MainWindow::onExportCurve()
         return;
     const QString suggested = m_fileCurve->text();
     const QString path = QFileDialog::getSaveFileName(
-        this, QStringLiteral("导出电价曲线数据"), suggested, QStringLiteral("CSV 文件 (*.csv)"));
+        this, QStringLiteral("导出电价曲线数据（96 期原生粒度）"), suggested, QStringLiteral("CSV 文件 (*.csv)"));
     if (path.isEmpty())
         return;
+
+    // #89：无论当前显示 24/96 颗粒度，导出一律按 96 期原生粒度重算
+    //   （同参数同模式，结果与界面显示口径自洽）
+    const QString mode = m_session.result.mode.isEmpty()
+                             ? QStringLiteral("MCP") : m_session.result.mode;
+    const ClearingResult native = ClearingFacade::clearPeriods(
+        m_session.market, 96, m_session.renewPercent / 100.0, mode);
+    const auto &rows = native.periods.isEmpty()
+                           ? m_session.result.periods : native.periods;
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -1889,18 +2076,20 @@ void MainWindow::onExportCurve()
     }
     QTextStream out(&f);
     out << QChar(0xFEFF);
-    out << QStringLiteral("时段,出清电价(元/MWh),总需求(MW),新能源出力(MW),常规出力(MW),出清电量(MWh)\n");
-    for (const auto &pr : m_session.result.periods) {
-        out << pr.time << ',' << QString::number(pr.clearingPrice, 'f', 1) << ','
+    out << QStringLiteral("period,时刻,负荷(MW),新能源出力(MW),常规出力(MW),出清电价(元/MWh),出清电量(MWh)\n");
+    for (const auto &pr : rows) {
+        out << pr.period << ',' << pr.time << ','
             << QString::number(pr.loadMW, 'f', 1) << ','
             << QString::number(pr.renewMW, 'f', 1) << ','
             << QString::number(pr.clearedMW - pr.renewMW, 'f', 1) << ','
+            << QString::number(pr.clearingPrice, 'f', 1) << ','
             << QString::number(pr.clearedMW, 'f', 1) << '\n';
     }
     f.close();
 
     addExportRecord(QFileInfo(path).fileName());
-    statusBar()->showMessage(QStringLiteral("已导出：%1").arg(path), 8000);
+    statusBar()->showMessage(
+        QStringLiteral("已导出 %1 期电价曲线：%2").arg(rows.size()).arg(path), 8000);
 }
 
 // ============================================================

@@ -47,6 +47,8 @@ private slots:
     void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别两张申报表）
     void onClearData();     // P1：清空数据
     void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表编辑写回 + 自动重算（#82）
+    void onEditPeriodChanged(int index);   // P1：交易时段下拉切换 → 单时段小表刷新（#89）
+    void onPrefillByLoad();                // P1：按负荷曲线预填当前时段申报量（#89）
 
 private:
     // 封面页 + 五个页面 + 空态卡片
@@ -125,6 +127,12 @@ private:
     QTableWidget   *m_conTable     = nullptr;
     QLabel         *m_statusBadges[2] = {nullptr, nullptr};
     QLabel         *m_checkText    = nullptr;
+    // #89：P1 单时段编辑视图
+    QComboBox      *m_periodCombo  = nullptr;   // 交易时段下拉（96 期原生粒度）
+    QLabel         *m_periodHint   = nullptr;   // 本时段供需概览（购电申报/负荷/发电可用）
+    int             m_editPeriod   = 1;         // 当前编辑时段（1–96）
+    // #89：P4 供需交叉图交易时段下拉
+    QComboBox      *m_chartPeriodCombo = nullptr;
 
     // 指标卡（P3）
     QLabel *m_kpiAvg    = nullptr;
