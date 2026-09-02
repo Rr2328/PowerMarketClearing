@@ -112,3 +112,26 @@ target_include_directories(ScenarioManagerTest
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/data
 )
+
+
+# ClearingFacade 独立测试（V1.3 对拍：窄表等价性 / 渗透率 / 24 期聚合）
+
+qt_add_executable(ClearingFacadeTest
+    core/clearing_facade_test.cpp
+    core/clearing_facade.h
+    core/clearing_facade.cpp
+    engine/clearing_engine.h
+    engine/clearing_engine.cpp
+    data/data_reader.h
+    data/data_reader.cpp
+)
+
+target_link_libraries(ClearingFacadeTest
+    PRIVATE
+        Qt::Core
+)
+
+target_include_directories(ClearingFacadeTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)

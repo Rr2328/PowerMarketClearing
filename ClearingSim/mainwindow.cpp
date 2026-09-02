@@ -535,21 +535,21 @@ QWidget *MainWindow::buildControlPage()
     });
 
     auto *slider = new QSlider(Qt::Horizontal);
-    slider->setRange(0, 200);
-    slider->setValue(static_cast<int>(m_session.renewMW));
-    slider->setToolTip(QStringLiteral("新能源出力（MW）直给：每时段以 0 价供给优先中标，拖动后即时重新出清"));
-    auto *valLabel = new QLabel(QStringLiteral("%1 MW").arg(m_session.renewMW, 0, 'f', 0));
+    slider->setRange(0, 100);
+    slider->setValue(static_cast<int>(m_session.renewPercent));
+    slider->setToolTip(QStringLiteral("新能源渗透率（0–100%，默认 20%）：每时段出力 = 渗透率 × 负荷，以 0 价供给优先中标，拖动后即时重新出清"));
+    auto *valLabel = new QLabel(QStringLiteral("%1 %").arg(m_session.renewPercent, 0, 'f', 0));
     auto *sliderRow = new QHBoxLayout();
     sliderRow->addWidget(slider, 1);
     sliderRow->addWidget(valLabel);
     connect(slider, &QSlider::valueChanged, this, [this, valLabel](int v) {
-        m_session.renewMW = double(v);
-        valLabel->setText(QStringLiteral("%1 MW").arg(v));
+        m_session.renewPercent = double(v);
+        valLabel->setText(QStringLiteral("%1 %").arg(v));
         if (m_paramSummary) {
             const bool gran96 = m_granCombo && m_granCombo->currentIndex() == 1;
             const QString today = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
             m_paramSummary->setText(QStringLiteral(
-                                        "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　新能源出力 %4 MW")
+                                        "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　新能源渗透率 %4 %")
                                         .arg(today,
                                              gran96 ? QStringLiteral("15 分钟") : QStringLiteral("1 小时"),
                                              gran96 ? QStringLiteral("96") : QStringLiteral("24"))
@@ -559,7 +559,7 @@ QWidget *MainWindow::buildControlPage()
         if (m_session.hasResult && m_session.hasData)
             rerunIfReady();
     });
-    form->addRow(QStringLiteral("新能源出力 (MW)："), sliderRow);
+    form->addRow(QStringLiteral("新能源渗透率："), sliderRow);
 
     m_paramSummary = new QLabel();
     m_paramSummary->setObjectName("paramSummary");
@@ -567,11 +567,11 @@ QWidget *MainWindow::buildControlPage()
         const bool gran96 = m_granCombo && m_granCombo->currentIndex() == 1;
         const QString today = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
         m_paramSummary->setText(QStringLiteral(
-                                    "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　新能源出力 %4 MW")
+                                    "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　新能源渗透率 %4 %")
                                     .arg(today,
                                          gran96 ? QStringLiteral("15 分钟") : QStringLiteral("1 小时"),
                                          gran96 ? QStringLiteral("96") : QStringLiteral("24"))
-                                    .arg(m_session.renewMW, 0, 'f', 0));
+                                    .arg(m_session.renewPercent, 0, 'f', 0));
     };
     refreshSummary();
 
@@ -581,7 +581,7 @@ QWidget *MainWindow::buildControlPage()
     connect(runBtn, &QPushButton::clicked, this, &MainWindow::onRunSim);
 
     auto *hint = new QLabel(QStringLiteral(
-        "说明：点击「开始仿真」→ 按 24/96 时段连续出清（每时段需求 = 购电申报总量，新能源 = 滑块出力）→ B 位真实引擎（MCP/PAB）。\n"
+        "说明：点击「开始仿真」→ 引擎恒跑 96 时段连续出清（每时段需求 = 购电申报总量，新能源 = 渗透率 × 负荷）→ B 位真实引擎（MCP/PAB）；24 时段为聚合视图。\n"
         "①页申报表的电价/电量双击即可修改，改后自动重新出清；拖动滑块同样即时重算。\n"
         "视角切换不重算、不重置数据，只改变各页面的显示口径（工作台语义）。"));
     hint->setObjectName("hintLabel");
@@ -1008,11 +1008,12 @@ QWidget *MainWindow::buildPerspectiveBar()
 
 // ============================================================
 // 数据导入（A 模块真实读取 + 校验）
-//   2026-09-02 口径：负荷曲线退场、新能源由 P2 滑块直给，
-//   导入表仅发电申报 + 购电申报两张。
+//   V1.3（#88）口径：申报两张长表必选；负荷曲线（渗透率基准）与
+//   新能源形状曲线可选——缺失时渗透率回退按购电申报总量换算。
 // ============================================================
 bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
-                               const QString &sourceName)
+                               const QString &sourceName,
+                               const QString &loadFile, const QString &renewFile)
 {
     MarketData d;
     QStringList errs;
@@ -1021,6 +1022,12 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
         ok = DataReader::readGeneratorBids(genFile, d.generatorBids, errs) && ok;
     if (!conFile.isEmpty())
         ok = DataReader::readConsumerBids(conFile, d.consumerBids, errs) && ok;
+
+    // 可选曲线（存在才读）：负荷 = 渗透率换算基准，新能源 = 形状曲线
+    if (!loadFile.isEmpty() && QFile::exists(loadFile))
+        ok = DataReader::readLoadCurve(loadFile, d.loadCurve, errs) && ok;
+    if (!renewFile.isEmpty() && QFile::exists(renewFile))
+        ok = DataReader::readRenewableOutput(renewFile, d.renewableOutputs, errs) && ok;
 
     if (!ok) {
         m_checkErrors = errs;
@@ -1080,7 +1087,9 @@ void MainWindow::onLoadSamples()
     }
     loadDataFiles(dir + QStringLiteral("/scenario/generator_bids.csv"),
                   dir + QStringLiteral("/scenario/consumer_bids.csv"),
-                  QStringLiteral("内置场景（8 机组 · 3 用户）"));
+                  QStringLiteral("内置场景（8 机组 · 3 用户）"),
+                  dir + QStringLiteral("/curves/load_curve.csv"),
+                  dir + QStringLiteral("/curves/renewable_output.csv"));
 }
 
 // P1：选择 CSV 文件（按文件名自动识别两张申报表）
@@ -1107,7 +1116,14 @@ void MainWindow::onImportCsv()
         statusBar()->showMessage(QStringLiteral("未识别到申报文件（文件名需含「发电/用户」等关键字）"), 8000);
         return;
     }
-    loadDataFiles(gen, con, QStringLiteral("自定义 CSV 导入"));
+
+    // 曲线文件未选时，在申报文件同目录自动识别（可选，缺省回退购电申报总量）
+    const QDir bidDir = QFileInfo(gen.isEmpty() ? con : gen).absoluteDir();
+    const QString loadCurve = bidDir.filePath(QStringLiteral("load_curve.csv"));
+    const QString renewCurve = bidDir.filePath(QStringLiteral("renewable_output.csv"));
+    loadDataFiles(gen, con, QStringLiteral("自定义 CSV 导入"),
+                  QFile::exists(loadCurve) ? loadCurve : QString(),
+                  QFile::exists(renewCurve) ? renewCurve : QString());
 }
 
 // P1：清空数据
@@ -1126,8 +1142,9 @@ void MainWindow::onClearData()
 
 // ============================================================
 // 出清流水线（P2 开始仿真共用）
-//   2026-09-02 口径：负荷退场，每时段需求 = 购电申报总量，
-//   新能源 = P2 滑块直给 MW，连续 24/96 时段出清。
+//   V1.3（#88）口径：负荷退场，每时段需求 = 购电申报总量；
+//   新能源 P_re(t) = 渗透率 × 负荷(t)（契约 §5.3）；
+//   引擎恒跑 96 期，24 为聚合视图。
 // ============================================================
 void MainWindow::runClearing()
 {
@@ -1137,9 +1154,9 @@ void MainWindow::runClearing()
     const QString mode = (m_btnPab && m_btnPab->isChecked())
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
 
-    // 出清（B 位真实引擎外壳，每时段 = 购电申报总量 + 滑块新能源）
+    // 出清（B 位真实引擎外壳，每时段 = 购电申报总量 + 渗透率×负荷的新能源）
     m_session.result = ClearingFacade::clearPeriods(
-        m_session.market, periodCount, m_session.renewMW, mode);
+        m_session.market, periodCount, m_session.renewPercent / 100.0, mode);
     m_session.hasResult = true;
 }
 
@@ -1359,7 +1376,7 @@ void MainWindow::renderCheckBar()
         m_checkText->setText(QStringLiteral(
             "<b>申报校验：规则全部通过</b>　数据来源：%1<br>"
             "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 报价单调性 · 0~540 限价 · 跨文件一致性），"
-            "依据《电力现货市场基本规则（试行）》4.2.3 条；新能源出力由仿真控制页滑块直给，不参与申报校验</span>")
+            "依据《电力现货市场基本规则（试行）》4.2.3 条；新能源不参与申报，出力由仿真控制页渗透率 × 负荷曲线自动生成</span>")
                 .arg(m_session.dataSource));
     } else {
         m_checkText->setStyleSheet(QStringLiteral("color:#B3261E;"));
@@ -1417,12 +1434,15 @@ void MainWindow::refreshResultPage()
     const Perspective p = m_session.perspective;
     const int T = periods.size();
 
+    // 96 期时 clearedMW 为 15 分钟功率（MW），×0.25 才是电量（MWh）；
+    // 24 期为聚合视图（小时均值 MW = MWh/h），×1 即电量。环形图同口径。
+    const double dh = (T == 96) ? 0.25 : 1.0;
     double priceSum = 0.0, volSum = 0.0, feeSum = 0.0;
     double mx = -std::numeric_limits<double>::max();
     double mn = std::numeric_limits<double>::max();
     for (const auto &pr : periods) {
         priceSum += pr.clearingPrice;
-        volSum += pr.clearedMW;
+        volSum += pr.clearedMW * dh;
         feeSum += (p == Perspective::Gen) ? pr.genFee
                  : (p == Perspective::Con) ? pr.conFee
                                            : (pr.genFee + pr.conFee);
@@ -1576,9 +1596,11 @@ void MainWindow::refreshChartPage()
         // 时段截面（V1.3 逐时段申报）：取首时段出清结果对应的申报截面
         const int chartPeriod = periods.isEmpty() ? 1 : periods[0].period;
         QVector<Step> gen;
-        // 供给 = 滑块新能源 RENEW（0 价，与撮合一致）+ 该时段常规机组申报
-        if (m_session.renewMW > 0.0)
-            gen.append({m_session.renewMW, 0.0});
+        // 供给 = 渗透率换算的 RENEW（0 价，与撮合同式）+ 该时段常规机组申报
+        const double renewCap = ClearingFacade::renewCapacityAt(
+            m_session.market, chartPeriod, m_session.renewPercent / 100.0);
+        if (renewCap > 0.0)
+            gen.append({renewCap, 0.0});
         for (const auto &g : m_session.market.generatorBids) {
             if (g.period > 0 && g.period != chartPeriod)
                 continue;

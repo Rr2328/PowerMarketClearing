@@ -61,9 +61,11 @@ private:
 
     // 数据与出清
     bool loadDataFiles(const QString &genFile, const QString &conFile,
-                       const QString &sourceName);   // 读取 + 校验 → m_session
+                       const QString &sourceName,
+                       const QString &loadFile = QString(),      // 可选：负荷曲线（渗透率基准）
+                       const QString &renewFile = QString());    // 可选：新能源形状曲线
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
-    void runClearing();                              // 多时段出清（新能源 = 滑块直给）
+    void runClearing();                              // 多时段出清（新能源 = 渗透率×负荷）
 
     // 三视角
     void setPerspective(Perspective p);              // 切换视角（不重算）

@@ -30,7 +30,7 @@ struct PeriodResult
     int period = 0;
     QString time;             // 时段标签，如 "01:00"（24 时段）/"00:15"（96 时段）
     double loadMW = 0.0;      // 该时段总需求（购电侧申报总量，负荷概念已退场）
-    double renewMW = 0.0;     // 该时段新能源实际消纳量（P2 滑块直给，0 价优先中标）
+    double renewMW = 0.0;     // 该时段新能源实际消纳量（渗透率×负荷换算，0 价优先中标）
     double clearingPrice = 0.0; // 该时段出清价
     double clearedMW = 0.0;     // 该时段总成交电量
     double genFee = 0.0;        // 发电侧结算总额
@@ -52,19 +52,27 @@ struct ClearingResult
 //   只做"构造入参 → 调真引擎 → 聚合结果"三件事，
 //   撮合与结算全部在 B 位真实引擎（ClearMarket + settle）内完成。
 //   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
-//   V1.3（#67）：申报数据带 period 维度，引擎逐时段取该时段申报撮合；
-//   窄表导入的数据已由 DataReader 展开为 96 期同量同价。
+//   V1.3（#67/#88）：申报数据带 period 维度，引擎恒跑 96 期、逐时段取
+//   该时段申报撮合；新能源出力按渗透率换算（契约 §5.3，B/C 同式）；
+//   24 时段仅为聚合视图（契约 §7.2），窄表导入数据已展开为 96 期同量同价。
 // ------------------------------------------------------------------
 
 class ClearingFacade
 {
 public:
-    // 一键演示：单时段基准出清
+    // 渗透率换算（契约 §5.3，B 与 C 必须用同一式）：
+    //   P_re(t) = 渗透率 × 负荷(t)；无负荷曲线时回退 购电申报总量(t)。
+    //   撮合入参（B）与供需图预览（C）统一走本函数，保证两边数字一致。
+    static double renewCapacityAt(const MarketData &market, int period,
+                                  double penetration);
+
+    // 一键演示：单时段基准出清（对拍锚点 250/50/12500，不含新能源）
     static ClearingResult clearBenchmark(const MarketData &market, const QString &mode);
 
-    // 开始仿真：连续出清（每时段需求 = 购电侧申报总量，新能源 = 滑块直给 MW）
+    // 开始仿真：连续出清。penetration ∈ [0,1]（界面滑块 0–100% ÷ 100）。
+    //   引擎内部恒跑 96 期；periodCount=24 时按契约 §7.2 聚合为小时视图。
     static ClearingResult clearPeriods(const MarketData &market, int periodCount,
-                                       double renewMW, const QString &mode);
+                                       double penetration, const QString &mode);
 
 private:
     // 单个时段的出清核心：构造真引擎入参 → ClearMarket → 聚合为 PeriodResult

@@ -28,7 +28,34 @@ double totalDemandAt(const MarketData &market, int period)
     return sum;
 }
 
+// 负荷曲线在指定时段的取值；无该时段数据返回 -1
+double loadAt(const MarketData &market, int period)
+{
+    for (const auto &l : market.loadCurve) {
+        if (l.period == period)
+            return l.load;
+    }
+    return -1.0;
+}
+
 } // namespace
+
+// ------------------------------------------------------------------
+// 渗透率换算（契约 §5.3，B 与 C 用同一式）：
+//   P_re(t) = 渗透率 × 负荷(t)；无负荷曲线时回退 购电申报总量(t)。
+//   注：形状曲线只决定各新能源机组之间的分配，进入撮合的 0 价 RENEW
+//   供给段总量恒为 P_re(t)，故此处无需逐机组拆分。
+// ------------------------------------------------------------------
+double ClearingFacade::renewCapacityAt(const MarketData &market, int period,
+                                       double penetration)
+{
+    if (penetration <= 0.0)
+        return 0.0;
+
+    const double base = loadAt(market, period);
+    const double demand = (base > 0.0) ? base : totalDemandAt(market, period);
+    return penetration * demand;
+}
 
 // ------------------------------------------------------------------
 // 一键演示：单时段基准出清（真引擎）
@@ -49,12 +76,14 @@ ClearingResult ClearingFacade::clearBenchmark(const MarketData &market, const QS
 
 // ------------------------------------------------------------------
 // 开始仿真：连续出清（真引擎）
-//   V1.3（#67）：申报数据带 period 维度，逐时段取该时段申报撮合——
-//   每时段需求 = 该时段购电申报合计，新能源出力 = P2 滑块直给 MW
-//   （价格接受者，0 价优先中标；渗透率换算属 #88）。
+//   V1.3（#67/#88）：引擎内部恒跑 96 期——逐时段取该时段申报撮合，
+//   新能源 P_re(t) = 渗透率 × 负荷(t)（0 价优先中标，契约 §5.3）；
+//   periodCount=24 时按契约 §7.2 聚合为小时视图（价 = 4 期均值，
+//   电量/出力 = 均值（= 小时 MWh/h 口径），费用 = 求和，明细不聚合
+//   ——取该小时出清价最高的 15 分钟截面）。
 // ------------------------------------------------------------------
 ClearingResult ClearingFacade::clearPeriods(const MarketData &market, int periodCount,
-                                        double renewMW, const QString &mode)
+                                        double penetration, const QString &mode)
 {
     ClearingResult result;
     result.mode = mode;
@@ -66,11 +95,47 @@ ClearingResult ClearingFacade::clearPeriods(const MarketData &market, int period
     if (anyDemand <= 0.0)
         return result;
 
-    for (int period = 1; period <= periodCount; ++period) {
-        const QString time = periodTime(period, periodCount);
+    // 第一步：恒跑 96 期原始出清
+    QVector<PeriodResult> raw;
+    raw.reserve(96);
+    for (int period = 1; period <= 96; ++period) {
+        const QString time = periodTime(period, 96);
         const double demand = totalDemandAt(market, period);
-        result.periods.append(
-            clearOne(market, period, time, demand, renewMW, 1.0, mode));
+        const double renewCap = renewCapacityAt(market, period, penetration);
+        raw.append(
+            clearOne(market, period, time, demand, renewCap, 1.0, mode));
+    }
+
+    // 第二步：96 期直出 / 24 期聚合视图
+    if (periodCount == 24) {
+        for (int hour = 1; hour <= 24; ++hour) {
+            PeriodResult agg;
+            agg.period = hour;
+            agg.time = periodTime(hour, 24);
+
+            int peakIdx = -1;              // 该小时出清价最高的 15 分钟截面
+            double priceSum = 0.0, loadSum = 0.0, renewSum = 0.0, volSum = 0.0;
+            for (int q = 0; q < 4; ++q) {
+                const PeriodResult &pr = raw[(hour - 1) * 4 + q];
+                priceSum += pr.clearingPrice;
+                loadSum += pr.loadMW;
+                renewSum += pr.renewMW;
+                volSum += pr.clearedMW;
+                agg.genFee += pr.genFee;
+                agg.conFee += pr.conFee;
+                if (peakIdx < 0 || pr.clearingPrice > raw[(hour - 1) * 4 + peakIdx].clearingPrice)
+                    peakIdx = q;
+            }
+            agg.clearingPrice = priceSum / 4.0;
+            agg.loadMW = loadSum / 4.0;      // 小时平均功率（= MWh/h）
+            agg.renewMW = renewSum / 4.0;
+            agg.clearedMW = volSum / 4.0;
+            agg.genDetails = raw[(hour - 1) * 4 + peakIdx].genDetails;
+            agg.conDetails = raw[(hour - 1) * 4 + peakIdx].conDetails;
+            result.periods.append(agg);
+        }
+    } else {
+        result.periods = raw;
     }
     return result;
 }
@@ -105,7 +170,7 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
     out.renewMW = renewMW;
 
     // ---- 构造真引擎入参：发电侧（V1.3：只取该时段的申报） ----
-    //   新能源 = P2 滑块直给 RENEW 0 价供给段（价格接受者，优先中标）；
+    //   新能源 = 渗透率换算出的 RENEW 0 价供给段（价格接受者，优先中标）；
     //   申报表内已无风/光申报行（D4），无需类型过滤。
     QVector<Generator> generators;
     if (renewMW > 0.0) {
@@ -121,6 +186,9 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
     for (const auto &g : market.generatorBids) {
         if (g.period > 0 && g.period != period)
             continue;   // 逐时段申报：只取当前时段
+        if (g.quantity <= 0.0)
+            continue;   // 0 量段 = 停机申报（规则⑥），不进撮合——
+                        // 否则会以 0 成交量刷新引擎的边际价指针
         Generator e;
         e.id = g.id;
         e.name = g.name;
@@ -130,10 +198,12 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
         generators.append(e);
     }
 
-    // ---- 购电侧：只取该时段的申报 ----
+    // ---- 购电侧：只取该时段的申报（0 量同样不进撮合） ----
     QVector<Consumer> consumers;
     for (const auto &c : market.consumerBids) {
         if (c.period > 0 && c.period != period)
+            continue;
+        if (c.quantity <= 0.0)
             continue;
         Consumer e;
         e.id = c.id;

@@ -18,7 +18,8 @@ struct AppSession
     bool hasData = false;              // 申报数据是否已导入（驱动 P2 就绪灯）
     bool hasResult = false;            // 出清是否已完成（驱动 P3/P4/P5 空态卡）
 
-    double renewMW = 60.0;             // P2 滑块：每时段新能源出力水平（MW，0~200）
+    double renewPercent = 20.0;        // P2 渗透率滑块：0~100%，默认 20%（V1.3 §5.3，
+                                      // P_re(t)=渗透率×负荷(t)，撮合与供需图同式换算）
 
     Perspective perspective = Perspective::Platform;   // 当前视角
 
