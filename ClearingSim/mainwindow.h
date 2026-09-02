@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QStringList>
 #include <QVector>
 
 #include "core/app_session.h"
@@ -16,6 +17,7 @@ class QPushButton;
 class QSlider;
 class QStackedWidget;
 class QTableWidget;
+class QTableWidgetItem;
 class QTabWidget;
 class QButtonGroup;
 class QValueAxis;
@@ -43,6 +45,7 @@ private slots:
     void onLoadSamples();   // P1：一键加载内置样例（benchmark 或 scenario）
     void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别两张申报表）
     void onClearData();     // P1：清空数据
+    void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表电价/电量编辑 → 写回 + 自动重算
 
 private:
     // 封面页 + 五个页面 + 空态卡片
@@ -67,6 +70,8 @@ private:
 
     // 状态与刷新
     void setHasResult(bool on);
+    void rerunIfReady();           // 数据/滑块变更后：已有结果则立即重算并刷新（基准例走单时段对拍）
+    void renderCheckBar();         // P1：校验汇总条渲染（导入与界面编辑共用）
     void refreshImportPage();      // P1：按视角填充申报表 + 状态卡
     void refreshResultPage();      // P3：指标卡 + 明细表（视角化）
     void refreshChartPage();       // P4：供需阶梯（真申报）+ 分时电价（真结果）
@@ -138,6 +143,8 @@ private:
     AppSession m_session;
 
     bool m_hasResult = false;
+    bool m_loadingBids = false;        // 程序填充申报表期间屏蔽 itemChanged（防递归）
+    QStringList m_checkErrors;         // 最近一次跨文件校验结果（导入/编辑后更新）
 };
 
 #endif // MAINWINDOW_H

@@ -343,7 +343,8 @@ QWidget *MainWindow::buildImportPage()
     auto *page = new QWidget();
 
     // --- 上：申报数据双页签（发电侧 / 购电侧，随视角隐藏） ---
-    auto *bidBox = new QGroupBox(QStringLiteral("申报数据（A 模块 · 真实读取与校验）"), page);
+    //   电价/电量两列可直接双击编辑：改购电侧电量 = 改市场需求（负荷概念已退场）
+    auto *bidBox = new QGroupBox(QStringLiteral("申报数据（读取校验 · 电价/电量双击可编辑，修改后自动重算）"), page);
 
     m_importTabs = new QTabWidget(bidBox);
 
@@ -357,7 +358,9 @@ QWidget *MainWindow::buildImportPage()
         QStringLiteral("申报电量 (MWh)"),
     });
     m_genTable->horizontalHeader()->setStretchLastSection(true);
-    m_genTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_genTable->setEditTriggers(QAbstractItemView::DoubleClicked
+                                | QAbstractItemView::EditKeyPressed
+                                | QAbstractItemView::AnyKeyPressed);
     m_genTable->setAlternatingRowColors(true);
 
     m_conTable = new QTableWidget(0, 5, bidBox);
@@ -369,11 +372,17 @@ QWidget *MainWindow::buildImportPage()
         QStringLiteral("申报电量 (MWh)"),
     });
     m_conTable->horizontalHeader()->setStretchLastSection(true);
-    m_conTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_conTable->setEditTriggers(QAbstractItemView::DoubleClicked
+                                | QAbstractItemView::EditKeyPressed
+                                | QAbstractItemView::AnyKeyPressed);
     m_conTable->setAlternatingRowColors(true);
 
     m_importTabs->addTab(m_genTable, QStringLiteral("发电侧申报"));
     m_importTabs->addTab(m_conTable, QStringLiteral("购电侧申报"));
+    connect(m_genTable, &QTableWidget::itemChanged,
+            this, &MainWindow::onBidItemChanged);
+    connect(m_conTable, &QTableWidget::itemChanged,
+            this, &MainWindow::onBidItemChanged);
 
     auto *loadBtn = new QPushButton(QStringLiteral("📂 加载内置样例"), bidBox);
     auto *csvBtn  = new QPushButton(QStringLiteral("📁 选择 CSV 文件…"), bidBox);
@@ -537,6 +546,7 @@ QWidget *MainWindow::buildControlPage()
     connect(m_renewSlider, &QSlider::valueChanged, this, [this, valLabel](int v) {
         m_session.renewMW = double(v);
         valLabel->setText(QStringLiteral("%1 MW").arg(v));
+        rerunIfReady();   // 已有出清结果则拖动滑块即时重算（与表格编辑一致）
     });
     m_session.renewMW = 60.0;
     form->addRow(QStringLiteral("新能源出力 (MW)："), sliderRow);
@@ -560,8 +570,8 @@ QWidget *MainWindow::buildControlPage()
     connect(runBtn, &QPushButton::clicked, this, &MainWindow::onRunSim);
 
     auto *hint = new QLabel(QStringLiteral(
-        "说明：点击「开始仿真」→ 逐时段出清计算（真引擎 ClearMarket 撮合，需求 = 购电申报总量恒定）。\n"
-        "视角切换不影响出清结果，只改变各页面的显示口径。"));
+        "说明：需求 = 购电申报总量——①页申报表的电价/电量可直接双击编辑，改购电量即改需求，修改后自动重算。\n"
+        "拖动新能源滑块同样即时重算；视角切换不影响出清结果，只改变各页面的显示口径。"));
     hint->setObjectName("hintLabel");
 
     auto *lay = new QVBoxLayout(box);
@@ -1026,6 +1036,7 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     m_session.dataSource = sourceName;
     m_session.hasData = true;
     m_session.resetResult();
+    m_checkErrors.clear();   // 导入数据校验通过（后续界面编辑会即时重检）
 
     refreshImportPage();
     updateFileNamePreviews();
@@ -1153,35 +1164,46 @@ void MainWindow::applyPerspective()
 
 // ============================================================
 // P1 刷新：真实申报表 + 状态卡 + 校验条 + 视角过滤
+//   电价/电量两列可编辑（其余列锁定）；填充期间屏蔽 itemChanged
 // ============================================================
 void MainWindow::refreshImportPage()
 {
+    const auto lockedItem = [](const QString &text) {
+        auto *it = new QTableWidgetItem(text);
+        it->setFlags(it->flags() & ~Qt::ItemIsEditable);
+        return it;
+    };
+
     // 发电侧申报表
     if (m_genTable) {
         const auto &gs = m_session.market.generatorBids;
+        m_loadingBids = true;
         m_genTable->setRowCount(gs.size());
         for (int i = 0; i < gs.size(); ++i) {
             const auto &g = gs[i];
-            m_genTable->setItem(i, 0, new QTableWidgetItem(g.id));
-            m_genTable->setItem(i, 1, new QTableWidgetItem(g.name));
-            m_genTable->setItem(i, 2, new QTableWidgetItem(g.type));
-            m_genTable->setItem(i, 3, new QTableWidgetItem(QString::number(g.segment)));
+            m_genTable->setItem(i, 0, lockedItem(g.id));
+            m_genTable->setItem(i, 1, lockedItem(g.name));
+            m_genTable->setItem(i, 2, lockedItem(g.type));
+            m_genTable->setItem(i, 3, lockedItem(QString::number(g.segment)));
             m_genTable->setItem(i, 4, new QTableWidgetItem(QString::number(g.price, 'f', 1)));
             m_genTable->setItem(i, 5, new QTableWidgetItem(QString::number(g.quantity, 'f', 1)));
         }
+        m_loadingBids = false;
     }
     // 购电侧申报表
     if (m_conTable) {
         const auto &cs = m_session.market.consumerBids;
+        m_loadingBids = true;
         m_conTable->setRowCount(cs.size());
         for (int i = 0; i < cs.size(); ++i) {
             const auto &c = cs[i];
-            m_conTable->setItem(i, 0, new QTableWidgetItem(c.id));
-            m_conTable->setItem(i, 1, new QTableWidgetItem(c.name));
-            m_conTable->setItem(i, 2, new QTableWidgetItem(QString::number(c.segment)));
+            m_conTable->setItem(i, 0, lockedItem(c.id));
+            m_conTable->setItem(i, 1, lockedItem(c.name));
+            m_conTable->setItem(i, 2, lockedItem(QString::number(c.segment)));
             m_conTable->setItem(i, 3, new QTableWidgetItem(QString::number(c.price, 'f', 1)));
             m_conTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.quantity, 'f', 1)));
         }
+        m_loadingBids = false;
     }
 
     // 数据集状态卡（负荷曲线已退场，仅申报两表）
@@ -1200,19 +1222,8 @@ void MainWindow::refreshImportPage()
         }
     }
 
-    // 校验汇总条
-    if (m_checkText) {
-        m_checkText->setStyleSheet(QString());
-        if (!m_session.hasData) {
-            m_checkText->setText(QStringLiteral(
-                "<b>申报校验：尚未导入数据</b>　点击「加载内置样例」或「选择 CSV 文件」导入申报数据"));
-        } else {
-            m_checkText->setText(QStringLiteral(
-                "<b>申报校验：5 项规则全部通过</b>　数据来源：%1<br>"
-                "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 单调性 · 0~540 限价 · 跨文件一致性），"
-                "依据《电力现货市场基本规则（试行）》4.2.3 条</span>").arg(m_session.dataSource));
-        }
-    }
+    // 校验汇总条（导入与界面编辑共用同一渲染）
+    renderCheckBar();
 
     // P2 就绪灯联动
     if (m_readyLabel) {
@@ -1234,6 +1245,145 @@ void MainWindow::refreshImportPage()
         if (!m_importTabs->isTabVisible(m_importTabs->currentIndex()))
             m_importTabs->setCurrentIndex(p == Perspective::Gen ? 0 : 1);
     }
+}
+
+// ============================================================
+// P1 校验汇总条渲染（导入与界面编辑共用）
+// ============================================================
+void MainWindow::renderCheckBar()
+{
+    if (!m_checkText)
+        return;
+    if (!m_session.hasData) {
+        m_checkText->setStyleSheet(QString());
+        m_checkText->setText(QStringLiteral(
+            "<b>申报校验：尚未导入数据</b>　点击「加载内置样例」或「选择 CSV 文件」导入申报数据"));
+        return;
+    }
+    if (m_checkErrors.isEmpty()) {
+        m_checkText->setStyleSheet(QString());
+        m_checkText->setText(QStringLiteral(
+            "<b>申报校验：5 项规则全部通过</b>　数据来源：%1<br>"
+            "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 单调性 · 0~540 限价 · 跨文件一致性），"
+            "依据《电力现货市场基本规则（试行）》4.2.3 条</span>").arg(m_session.dataSource));
+    } else {
+        m_checkText->setStyleSheet(QStringLiteral("color:#B3261E;"));
+        m_checkText->setText(QStringLiteral(
+                                 "<b>申报校验未通过：%1 项（出清仍按当前申报计算）</b><br>%2")
+                                 .arg(m_checkErrors.size())
+                                 .arg(m_checkErrors.join(QStringLiteral("<br>"))));
+    }
+}
+
+// ============================================================
+// P1 申报表编辑：电价/电量 → 写回会话 + 即时重检 + 自动重算
+//   需求 = 购电申报总量：改购电侧电量即改市场需求，无需任何"负荷"输入
+// ============================================================
+void MainWindow::onBidItemChanged(QTableWidgetItem *item)
+{
+    if (m_loadingBids || !item)
+        return;
+    QTableWidget *tbl = item->tableWidget();
+    const bool isGen = (tbl == m_genTable);
+    if (!isGen && tbl != m_conTable)
+        return;
+    const int row = item->row();
+    const int col = item->column();
+    const int priceCol = isGen ? 4 : 3;
+    const int qtyCol   = isGen ? 5 : 4;
+    if (col != priceCol && col != qtyCol)
+        return;
+
+    // 两种申报结构都有 price/quantity 字段，用泛型 lambda 统一处理
+    const auto handle = [&](auto &bids) {
+        if (row < 0 || row >= bids.size())
+            return;
+        auto &bid = bids[row];
+
+        const double oldVal = (col == priceCol) ? bid.price : bid.quantity;
+        const auto revert = [this, item, oldVal]() {
+            m_loadingBids = true;
+            item->setText(QString::number(oldVal, 'f', 1));
+            m_loadingBids = false;
+        };
+
+        bool ok = false;
+        const double val = item->text().toDouble(&ok);
+        if (!ok) {
+            revert();
+            statusBar()->showMessage(QStringLiteral("输入无效：请填写数字（如 260 或 260.5）"), 6000);
+            return;
+        }
+        if (col == priceCol && (val < 0.0 || val > 540.0)) {
+            revert();
+            statusBar()->showMessage(QStringLiteral("申报电价需在 0~540 元/MWh 之间（限价规则）"), 6000);
+            return;
+        }
+        if (col == qtyCol && val <= 0.0) {
+            revert();
+            statusBar()->showMessage(QStringLiteral("申报电量需为正数"), 6000);
+            return;
+        }
+        if (qFuzzyCompare(val + 1.0, oldVal + 1.0))   // 数值未变（仅文本格式差异）
+            return;
+
+        if (col == priceCol)
+            bid.price = val;
+        else
+            bid.quantity = val;
+
+        // 编辑后即时重跑跨文件校验（结果只影响提示条，不阻断出清）
+        QStringList errs;
+        DataReader::validateRelations(m_session.market, errs);
+        m_checkErrors = errs;
+        renderCheckBar();
+
+        // 已有出清结果 → 立即重算并刷新各页
+        if (m_session.hasResult && m_session.hasData) {
+            rerunIfReady();
+            double demand = 0.0;
+            for (const auto &c : m_session.market.consumerBids)
+                demand += c.quantity;
+            const auto &pr = m_session.result.periods.isEmpty()
+                                 ? PeriodResult() : m_session.result.periods.first();
+            statusBar()->showMessage(
+                QStringLiteral("申报已修改并重算：需求总量 %1 MWh · 出清价 %2 元/MWh · 成交 %3 MWh")
+                    .arg(demand, 0, 'f', 0)
+                    .arg(pr.clearingPrice, 0, 'f', 0)
+                    .arg(pr.clearedMW, 0, 'f', 0),
+                6000);
+        } else {
+            statusBar()->showMessage(
+                QStringLiteral("申报已修改（尚未出清，可在②仿真控制点击「开始仿真」）"), 5000);
+        }
+    };
+    if (isGen)
+        handle(m_session.market.generatorBids);
+    else
+        handle(m_session.market.consumerBids);
+}
+
+// ============================================================
+// 数据/滑块变更后：已有出清结果则立即重算并刷新
+//   基准例（一键演示）走单时段对拍 clearBenchmark，其余走逐时段仿真
+// ============================================================
+void MainWindow::rerunIfReady()
+{
+    if (!m_session.hasResult || !m_session.hasData)
+        return;
+    const QString mode = (m_btnPab && m_btnPab->isChecked())
+                             ? QStringLiteral("PAB") : QStringLiteral("MCP");
+    if (m_session.result.sourceName.contains(QStringLiteral("基准"))) {
+        m_session.result = FakeEngine::clearBenchmark(m_session.market, mode);
+        m_session.hasResult = true;
+    } else {
+        runClearing();
+    }
+    if (!m_session.hasResult)
+        return;
+    refreshResultPage();
+    refreshChartPage();
+    refreshExportPage();
 }
 
 // ============================================================
