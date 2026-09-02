@@ -1,12 +1,14 @@
 #include "scenario_manager.h"
 
-#include <QMap>
+#include <QHash>
+#include <QSet>
+
+#include <algorithm>
 
 namespace
 {
 
-// 获取时段数量
-int periodCount(
+int periodCountFromGranularity(
     TimeGranularity granularity)
 {
     switch (granularity)
@@ -21,8 +23,8 @@ int periodCount(
     return 0;
 }
 
-// 获取单时段长度
-double intervalHours(
+
+double intervalHoursFromGranularity(
     TimeGranularity granularity)
 {
     switch (granularity)
@@ -37,201 +39,135 @@ double intervalHours(
     return 0.0;
 }
 
-// 24 时段时间标签
-QString hourText(int period)
-{
-    if (period == 24)
-    {
-        return "24:00";
-    }
 
-    return QString("%1:00")
-        .arg(
-            period,
-            2,
-            10,
-            QChar('0'));
-}
-
-// 负荷时段整理
-bool buildLoadMap(
-    const QVector<LoadPoint> &data,
+bool checkLoadPeriods(
+    const QVector<LoadPoint> &loadCurve,
     int expectedCount,
-    QMap<int, LoadPoint> &loadMap,
     QStringList &errors)
 {
-    loadMap.clear();
+    QSet<int> periods;
 
-    if (data.size() != expectedCount)
+    for (const LoadPoint &point :
+         loadCurve)
+    {
+        if (point.period < 1 ||
+            point.period > expectedCount)
+        {
+            errors.append(
+                QString(
+                    "负荷曲线出现非法时段 %1，当前模式应为 1~%2")
+                    .arg(point.period)
+                    .arg(expectedCount));
+
+            return false;
+        }
+
+        if (periods.contains(
+                point.period))
+        {
+            errors.append(
+                QString(
+                    "负荷曲线时段 %1 重复")
+                    .arg(point.period));
+
+            return false;
+        }
+
+        periods.insert(
+            point.period);
+    }
+
+    if (periods.size() !=
+        expectedCount)
     {
         errors.append(
             QString(
                 "负荷数据应包含 %1 个时段，实际为 %2 个")
                 .arg(expectedCount)
-                .arg(data.size()));
+                .arg(periods.size()));
 
         return false;
-    }
-
-    for (const LoadPoint &item : data)
-    {
-        if (item.period < 1 ||
-            item.period > expectedCount)
-        {
-            errors.append(
-                QString(
-                    "负荷时段 %1 超出 1~%2 范围")
-                    .arg(item.period)
-                    .arg(expectedCount));
-
-            continue;
-        }
-
-        if (loadMap.contains(item.period))
-        {
-            errors.append(
-                QString(
-                    "负荷时段 %1 重复")
-                    .arg(item.period));
-
-            continue;
-        }
-
-        loadMap.insert(
-            item.period,
-            item);
     }
 
     for (int period = 1;
          period <= expectedCount;
          ++period)
     {
-        if (!loadMap.contains(period))
+        if (!periods.contains(
+                period))
         {
             errors.append(
                 QString(
-                    "负荷数据缺少时段 %1")
+                    "负荷曲线缺少时段 %1")
                     .arg(period));
+
+            return false;
         }
     }
 
-    return errors.isEmpty();
+    return true;
 }
 
-// 新能源时段整理
-bool buildRenewableMap(
-    const QVector<RenewableOutput> &data,
+
+bool checkBidPeriods(
+    const MarketData &data,
     int expectedCount,
-    QMap<QString, QMap<int, RenewableOutput>> &renewableMap,
     QStringList &errors)
 {
-    renewableMap.clear();
-
-    QMap<QString, QString> types;
-
-    for (const RenewableOutput &item : data)
+    for (const GeneratorBid &bid :
+         data.generatorBids)
     {
-        if (item.generatorId.isEmpty())
+        if (bid.period < 1 ||
+            bid.period > expectedCount)
         {
             errors.append(
-                "新能源机组 ID 为空");
+                QString(
+                    "发电申报机组 %1 出现非法时段 %2")
+                    .arg(bid.id)
+                    .arg(bid.period));
 
-            continue;
+            return false;
         }
+    }
 
+    for (const ConsumerBid &bid :
+         data.consumerBids)
+    {
+        if (bid.period < 1 ||
+            bid.period > expectedCount)
+        {
+            errors.append(
+                QString(
+                    "购电申报用户 %1 出现非法时段 %2")
+                    .arg(bid.id)
+                    .arg(bid.period));
+
+            return false;
+        }
+    }
+
+    for (const RenewableOutput &item :
+         data.renewableOutputs)
+    {
         if (item.period < 1 ||
             item.period > expectedCount)
         {
             errors.append(
                 QString(
-                    "新能源机组 %1 的时段 %2 超出 1~%3 范围")
-                    .arg(item.generatorId)
-                    .arg(item.period)
-                    .arg(expectedCount));
-
-            continue;
-        }
-
-        if (types.contains(item.generatorId) &&
-            types.value(item.generatorId) !=
-                item.generatorType)
-        {
-            errors.append(
-                QString(
-                    "新能源机组 %1 的类型不一致")
-                    .arg(item.generatorId));
-
-            continue;
-        }
-
-        if (renewableMap[item.generatorId]
-                .contains(item.period))
-        {
-            errors.append(
-                QString(
-                    "新能源机组 %1 的时段 %2 重复")
+                    "新能源机组 %1 出现非法时段 %2")
                     .arg(item.generatorId)
                     .arg(item.period));
 
-            continue;
-        }
-
-        types[item.generatorId] =
-            item.generatorType;
-
-        renewableMap[item.generatorId]
-            .insert(
-                item.period,
-                item);
-    }
-
-    for (auto it =
-         renewableMap.cbegin();
-         it != renewableMap.cend();
-         ++it)
-    {
-        const QString generatorId =
-            it.key();
-
-        const QMap<int, RenewableOutput> &periods =
-            it.value();
-
-        if (periods.size() != expectedCount)
-        {
-            errors.append(
-                QString(
-                    "新能源机组 %1 应包含 %2 个时段，实际为 %3 个")
-                    .arg(generatorId)
-                    .arg(expectedCount)
-                    .arg(periods.size()));
-
-            continue;
-        }
-
-        for (int period = 1;
-             period <= expectedCount;
-             ++period)
-        {
-            if (!periods.contains(period))
-            {
-                errors.append(
-                    QString(
-                        "新能源机组 %1 缺少时段 %2")
-                        .arg(generatorId)
-                        .arg(period));
-
-                break;
-            }
+            return false;
         }
     }
 
-    return errors.isEmpty();
+    return true;
 }
 
 } // namespace
 
 
-// 负荷 96→24 聚合
 bool ScenarioManager::aggregateLoadTo24(
     const QVector<LoadPoint> &load96,
     QVector<LoadPoint> &load24,
@@ -240,18 +176,63 @@ bool ScenarioManager::aggregateLoadTo24(
     load24.clear();
     errors.clear();
 
-    QMap<int, LoadPoint> loadMap;
-
-    if (!buildLoadMap(
-            load96,
-            96,
-            loadMap,
-            errors))
+    if (load96.size() != 96)
     {
+        errors.append(
+            QString(
+                "96→24 聚合要求负荷数据为 96 个时段，实际为 %1 个")
+                .arg(load96.size()));
+
         return false;
     }
 
-    load24.reserve(24);
+    QHash<int, LoadPoint> loadMap;
+
+    for (const LoadPoint &point :
+         load96)
+    {
+        if (point.period < 1 ||
+            point.period > 96)
+        {
+            errors.append(
+                QString(
+                    "负荷曲线出现非法时段 %1")
+                    .arg(point.period));
+
+            return false;
+        }
+
+        if (loadMap.contains(
+                point.period))
+        {
+            errors.append(
+                QString(
+                    "负荷曲线时段 %1 重复")
+                    .arg(point.period));
+
+            return false;
+        }
+
+        loadMap.insert(
+            point.period,
+            point);
+    }
+
+    for (int period = 1;
+         period <= 96;
+         ++period)
+    {
+        if (!loadMap.contains(
+                period))
+        {
+            errors.append(
+                QString(
+                    "负荷曲线缺少时段 %1")
+                    .arg(period));
+
+            return false;
+        }
+    }
 
     for (int hour = 1;
          hour <= 24;
@@ -260,32 +241,45 @@ bool ScenarioManager::aggregateLoadTo24(
         const int firstPeriod =
             (hour - 1) * 4 + 1;
 
-        double total = 0.0;
+        double totalLoad = 0.0;
 
         for (int offset = 0;
              offset < 4;
              ++offset)
         {
-            total +=
+            const int sourcePeriod =
+                firstPeriod + offset;
+
+            totalLoad +=
                 loadMap.value(
-                           firstPeriod + offset)
+                           sourcePeriod)
                     .load;
         }
 
-        LoadPoint item;
+        const int lastPeriod =
+            firstPeriod + 3;
 
-        item.period = hour;
-        item.time = hourText(hour);
-        item.load = total / 4.0;
+        LoadPoint result;
 
-        load24.push_back(item);
+        result.period =
+            hour;
+
+        result.time =
+            loadMap.value(
+                       lastPeriod)
+                .time;
+
+        result.load =
+            totalLoad / 4.0;
+
+        load24.push_back(
+            result);
     }
 
     return true;
 }
 
 
-// 新能源 96→24 聚合
 bool ScenarioManager::aggregateRenewableTo24(
     const QVector<RenewableOutput> &renewable96,
     QVector<RenewableOutput> &renewable24,
@@ -294,67 +288,169 @@ bool ScenarioManager::aggregateRenewableTo24(
     renewable24.clear();
     errors.clear();
 
-    QMap<QString, QMap<int, RenewableOutput>>
-        renewableMap;
-
-    if (!buildRenewableMap(
-            renewable96,
-            96,
-            renewableMap,
-            errors))
+    if (renewable96.isEmpty())
     {
+        errors.append(
+            "新能源数据为空");
+
         return false;
     }
 
-    renewable24.reserve(
-        renewableMap.size() * 24);
+    QSet<QString> generatorIds;
 
-    for (auto generatorIt =
-         renewableMap.cbegin();
-         generatorIt != renewableMap.cend();
-         ++generatorIt)
+    QHash<QString, QString>
+        generatorTypes;
+
+    QHash<QString, RenewableOutput>
+        outputMap;
+
+    for (const RenewableOutput &item :
+         renewable96)
     {
-        const QString generatorId =
-            generatorIt.key();
-
-        const QMap<int, RenewableOutput> &periods =
-            generatorIt.value();
-
-        const QString generatorType =
-            periods.first()
-                .generatorType;
-
-        for (int hour = 1;
-             hour <= 24;
-             ++hour)
+        if (item.generatorId.isEmpty())
         {
-            const int firstPeriod =
-                (hour - 1) * 4 + 1;
+            errors.append(
+                "新能源机组编号为空");
 
-            double total = 0.0;
+            return false;
+        }
+
+        if (item.period < 1 ||
+            item.period > 96)
+        {
+            errors.append(
+                QString(
+                    "新能源机组 %1 出现非法时段 %2")
+                    .arg(item.generatorId)
+                    .arg(item.period));
+
+            return false;
+        }
+
+        if (generatorTypes.contains(
+                item.generatorId) &&
+            generatorTypes.value(
+                item.generatorId) !=
+                item.generatorType)
+        {
+            errors.append(
+                QString(
+                    "新能源机组 %1 的类型不一致")
+                    .arg(item.generatorId));
+
+            return false;
+        }
+
+        generatorIds.insert(
+            item.generatorId);
+
+        generatorTypes.insert(
+            item.generatorId,
+            item.generatorType);
+
+        const QString key =
+            item.generatorId +
+            "|" +
+            QString::number(
+                item.period);
+
+        if (outputMap.contains(key))
+        {
+            errors.append(
+                QString(
+                    "新能源机组 %1 的时段 %2 重复")
+                    .arg(item.generatorId)
+                    .arg(item.period));
+
+            return false;
+        }
+
+        outputMap.insert(
+            key,
+            item);
+    }
+
+    QStringList sortedIds =
+        generatorIds.values();
+
+    std::sort(
+        sortedIds.begin(),
+        sortedIds.end());
+
+    for (const QString &generatorId :
+         sortedIds)
+    {
+        for (int period = 1;
+             period <= 96;
+             ++period)
+        {
+            const QString key =
+                generatorId +
+                "|" +
+                QString::number(
+                    period);
+
+            if (!outputMap.contains(key))
+            {
+                errors.append(
+                    QString(
+                        "新能源机组 %1 缺少时段 %2")
+                        .arg(generatorId)
+                        .arg(period));
+
+                return false;
+            }
+        }
+    }
+
+    for (int hour = 1;
+         hour <= 24;
+         ++hour)
+    {
+        const int firstPeriod =
+            (hour - 1) * 4 + 1;
+
+        for (const QString &generatorId :
+             sortedIds)
+        {
+            double totalOutput = 0.0;
 
             for (int offset = 0;
                  offset < 4;
                  ++offset)
             {
-                total +=
-                    periods.value(
-                               firstPeriod + offset)
+                const int sourcePeriod =
+                    firstPeriod + offset;
+
+                const QString key =
+                    generatorId +
+                    "|" +
+                    QString::number(
+                        sourcePeriod);
+
+                totalOutput +=
+                    outputMap.value(
+                                 key)
                         .output;
             }
 
-            RenewableOutput item;
+            RenewableOutput result;
 
-            item.generatorId =
+            result.generatorId =
                 generatorId;
 
-            item.generatorType =
-                generatorType;
+            result.generatorType =
+                generatorTypes.value(
+                    generatorId);
 
-            item.period = hour;
-            item.output = total / 4.0;
+            result.period =
+                hour;
 
-            renewable24.push_back(item);
+            result.output =
+                totalOutput / 4.0;
+
+            renewable24.push_back(
+                result);
         }
     }
 
@@ -362,7 +458,6 @@ bool ScenarioManager::aggregateRenewableTo24(
 }
 
 
-// 构建逐时段场景
 bool ScenarioManager::buildPeriodScenarios(
     const MarketData &data,
     TimeGranularity granularity,
@@ -372,123 +467,214 @@ bool ScenarioManager::buildPeriodScenarios(
     scenarios.clear();
     errors.clear();
 
-    const int count =
-        periodCount(granularity);
+    const int expectedCount =
+        periodCountFromGranularity(
+            granularity);
 
-    const double hours =
-        intervalHours(granularity);
+    const double intervalHours =
+        intervalHoursFromGranularity(
+            granularity);
 
-    if (count == 0 ||
-        hours <= 0.0)
+    if (expectedCount == 0 ||
+        intervalHours <= 0.0)
     {
         errors.append(
-            "无效的时段颗粒度");
+            "不支持的时段颗粒度");
 
         return false;
     }
 
-    QVector<LoadPoint> loadData;
-    QVector<RenewableOutput> renewableData;
-
-    if (granularity ==
-        TimeGranularity::QuarterHourly96)
+    if (data.generatorBids.isEmpty())
     {
-        loadData =
-            data.loadCurve;
+        errors.append(
+            "发电侧申报为空");
 
-        renewableData =
-            data.renewableOutputs;
-    }
-    else
-    {
-        QStringList tempErrors;
-
-        if (!aggregateLoadTo24(
-                data.loadCurve,
-                loadData,
-                tempErrors))
-        {
-            errors.append(tempErrors);
-        }
-
-        tempErrors.clear();
-
-        if (!aggregateRenewableTo24(
-                data.renewableOutputs,
-                renewableData,
-                tempErrors))
-        {
-            errors.append(tempErrors);
-        }
-
-        if (!errors.isEmpty())
-        {
-            return false;
-        }
+        return false;
     }
 
-    QMap<int, LoadPoint> loadMap;
+    if (data.consumerBids.isEmpty())
+    {
+        errors.append(
+            "用户侧申报为空");
 
-    if (!buildLoadMap(
-            loadData,
-            count,
-            loadMap,
+        return false;
+    }
+
+    if (!checkLoadPeriods(
+            data.loadCurve,
+            expectedCount,
             errors))
     {
         return false;
     }
 
-    QMap<QString, QMap<int, RenewableOutput>>
+    if (!checkBidPeriods(
+            data,
+            expectedCount,
+            errors))
+    {
+        return false;
+    }
+
+
+    QStringList relationErrors;
+
+    if (!DataReader::validateRelations(
+            data,
+            relationErrors))
+    {
+        for (const QString &error :
+             relationErrors)
+        {
+            errors.append(
+                error);
+        }
+
+        return false;
+    }
+
+
+    QHash<int, LoadPoint>
+        loadMap;
+
+    QHash<int, QVector<GeneratorBid>>
+        generatorBidMap;
+
+    QHash<int, QVector<ConsumerBid>>
+        consumerBidMap;
+
+    QHash<int, QVector<RenewableOutput>>
         renewableMap;
 
-    if (!buildRenewableMap(
-            renewableData,
-            count,
-            renewableMap,
-            errors))
+
+    for (const LoadPoint &point :
+         data.loadCurve)
     {
-        return false;
+        loadMap.insert(
+            point.period,
+            point);
     }
 
-    scenarios.reserve(count);
+
+    for (const GeneratorBid &bid :
+         data.generatorBids)
+    {
+        generatorBidMap[
+            bid.period]
+            .push_back(
+                bid);
+    }
+
+
+    for (const ConsumerBid &bid :
+         data.consumerBids)
+    {
+        consumerBidMap[
+            bid.period]
+            .push_back(
+                bid);
+    }
+
+
+    for (const RenewableOutput &item :
+         data.renewableOutputs)
+    {
+        renewableMap[
+            item.period]
+            .push_back(
+                item);
+    }
+
+
+    scenarios.reserve(
+        expectedCount);
+
 
     for (int period = 1;
-         period <= count;
+         period <= expectedCount;
          ++period)
     {
+        if (!loadMap.contains(
+                period))
+        {
+            errors.append(
+                QString(
+                    "缺少负荷时段 %1")
+                    .arg(period));
+
+            scenarios.clear();
+
+            return false;
+        }
+
+        if (!generatorBidMap.contains(
+                period) ||
+            generatorBidMap.value(
+                               period)
+                .isEmpty())
+        {
+            errors.append(
+                QString(
+                    "时段 %1 没有发电侧申报")
+                    .arg(period));
+
+            scenarios.clear();
+
+            return false;
+        }
+
+        if (!consumerBidMap.contains(
+                period) ||
+            consumerBidMap.value(
+                              period)
+                .isEmpty())
+        {
+            errors.append(
+                QString(
+                    "时段 %1 没有购电侧申报")
+                    .arg(period));
+
+            scenarios.clear();
+
+            return false;
+        }
+
+
         PeriodScenario scenario;
 
-        scenario.period = period;
+        scenario.period =
+            period;
 
         scenario.time =
-            loadMap.value(period)
+            loadMap.value(
+                       period)
                 .time;
 
         scenario.intervalHours =
-            hours;
+            intervalHours;
 
         scenario.loadMW =
-            loadMap.value(period)
+            loadMap.value(
+                       period)
                 .load;
 
-        scenario.renewableBase.reserve(
-            renewableMap.size());
+        scenario.generatorBids =
+            generatorBidMap.value(
+                period);
 
-        for (auto generatorIt =
-             renewableMap.cbegin();
-             generatorIt != renewableMap.cend();
-             ++generatorIt)
-        {
-            scenario.renewableBase
-                .push_back(
-                    generatorIt
-                        .value()
-                        .value(period));
-        }
+        scenario.consumerBids =
+            consumerBidMap.value(
+                period);
+
+        scenario.renewableBase =
+            renewableMap.value(
+                period);
+
 
         scenarios.push_back(
             scenario);
     }
+
 
     return true;
 }

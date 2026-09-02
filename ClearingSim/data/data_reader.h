@@ -16,6 +16,8 @@ struct GeneratorBid
 
     double price = 0.0;
     double quantity = 0.0;
+
+    int period = 0;
 };
 
 // 用户侧申报数据
@@ -28,9 +30,11 @@ struct ConsumerBid
 
     double price = 0.0;
     double quantity = 0.0;
+
+    int period = 0;
 };
 
-// 负荷曲线数据
+// 负荷曲线
 struct LoadPoint
 {
     int period = 0;
@@ -40,7 +44,7 @@ struct LoadPoint
     double load = 0.0;
 };
 
-// 新能源出力数据
+// 新能源出力
 struct RenewableOutput
 {
     QString generatorId;
@@ -51,7 +55,7 @@ struct RenewableOutput
     double output = 0.0;
 };
 
-// 数据文件路径
+// 一套场景的数据文件
 struct DataFileSet
 {
     QString generatorBidsFile;
@@ -60,7 +64,7 @@ struct DataFileSet
     QString renewableOutputFile;
 };
 
-// 统一市场输入数据
+// 统一市场数据
 struct MarketData
 {
     QVector<GeneratorBid> generatorBids;
@@ -77,7 +81,6 @@ struct MarketData
     }
 };
 
-// CSV 数据读取接口
 class DataReader
 {
 public:
