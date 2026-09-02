@@ -19,12 +19,16 @@ qt_add_executable(ClearingSim
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    mainwindow.ui
 
     data/data_reader.h
     data/data_reader.cpp
 
     data/scenario_manager.h
     data/scenario_manager.cpp
+
+    clearing_engine.h
+    clearing_engine.cpp
 )
 
 target_link_libraries(ClearingSim
