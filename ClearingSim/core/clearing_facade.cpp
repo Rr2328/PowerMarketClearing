@@ -1,4 +1,4 @@
-#include "core/fake_engine.h"
+#include "core/clearing_facade.h"
 
 #include "engine/clearing_engine.h"
 
@@ -33,7 +33,7 @@ double totalDemandAt(const MarketData &market, int period)
 // ------------------------------------------------------------------
 // 一键演示：单时段基准出清（真引擎）
 // ------------------------------------------------------------------
-ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QString &mode)
+ClearingResult ClearingFacade::clearBenchmark(const MarketData &market, const QString &mode)
 {
     // 基准例（窄表）已展开为 96 期同量同价：取时段 1 的申报，等价于旧单时段行为
     const double demand = totalDemandAt(market, 1);
@@ -53,7 +53,7 @@ ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QStrin
 //   每时段需求 = 该时段购电申报合计，新能源出力 = P2 滑块直给 MW
 //   （价格接受者，0 价优先中标；渗透率换算属 #88）。
 // ------------------------------------------------------------------
-ClearingResult FakeEngine::clearPeriods(const MarketData &market, int periodCount,
+ClearingResult ClearingFacade::clearPeriods(const MarketData &market, int periodCount,
                                         double renewMW, const QString &mode)
 {
     ClearingResult result;
@@ -76,7 +76,7 @@ ClearingResult FakeEngine::clearPeriods(const MarketData &market, int periodCoun
 }
 
 // 时段标签：24 时段 "01:00"~"24:00"；96 时段 "00:15"~"24:00"
-QString FakeEngine::periodTime(int period, int periodCount)
+QString ClearingFacade::periodTime(int period, int periodCount)
 {
     if (periodCount == 96) {
         const int totalMinutes = period * 15;
@@ -94,7 +94,7 @@ QString FakeEngine::periodTime(int period, int periodCount)
 // ------------------------------------------------------------------
 // 单时段出清核心：调用 B 位真引擎 ClearMarket，再聚合为界面结构
 // ------------------------------------------------------------------
-PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
+PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
                                   const QString &time, double demandMW, double renewMW,
                                   double scale, const QString &mode)
 {

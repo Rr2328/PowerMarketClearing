@@ -44,7 +44,7 @@
 #include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 
-#include "core/fake_engine.h"
+#include "core/clearing_facade.h"
 #include "data/data_reader.h"
 #include "data/scenario_manager.h"
 
@@ -1138,7 +1138,7 @@ void MainWindow::runClearing()
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
 
     // 出清（B 位真实引擎外壳，每时段 = 购电申报总量 + 滑块新能源）
-    m_session.result = FakeEngine::clearPeriods(
+    m_session.result = ClearingFacade::clearPeriods(
         m_session.market, periodCount, m_session.renewMW, mode);
     m_session.hasResult = true;
 }
@@ -1378,7 +1378,7 @@ void MainWindow::rerunIfReady()
     const QString mode = (m_btnPab && m_btnPab->isChecked())
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
     if (m_session.result.sourceName.contains(QStringLiteral("基准"))) {
-        m_session.result = FakeEngine::clearBenchmark(m_session.market, mode);
+        m_session.result = ClearingFacade::clearBenchmark(m_session.market, mode);
         m_session.hasResult = true;
     } else {
         runClearing();
@@ -1746,7 +1746,7 @@ void MainWindow::onStartDemo()
 
     const QString mode = (m_btnPab && m_btnPab->isChecked())
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
-    m_session.result = FakeEngine::clearBenchmark(m_session.market, mode);
+    m_session.result = ClearingFacade::clearBenchmark(m_session.market, mode);
     m_session.hasResult = true;
     setHasResult(true);
     m_nav->setCurrentRow(2);

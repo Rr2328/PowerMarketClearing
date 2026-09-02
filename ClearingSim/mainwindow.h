@@ -29,7 +29,7 @@ class QValueAxis;
 //   导航永不锁死；P3/P4/P5 无出清结果时显示空态引导卡片
 // 接线状态（feature/ui-wiring 分支）：
 //   - P1 数据导入：接入 A 模块 DataReader::readAll / validateRelations（真实校验）
-//   - P2 仿真控制：接入 A 模块 buildPeriodScenarios + FakeEngine（B 位算法待替换）
+//   - P2 仿真控制：接入 A 模块 buildPeriodScenarios + ClearingFacade（内部已调真引擎 ClearMarket）
 //   - P3/P4/P5：全部改读 AppSession.result，支持三视角过滤
 class MainWindow : public QMainWindow
 {

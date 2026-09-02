@@ -1,5 +1,5 @@
-#ifndef FAKE_ENGINE_H
-#define FAKE_ENGINE_H
+#ifndef CLEARING_FACADE_H
+#define CLEARING_FACADE_H
 
 #include <QString>
 #include <QVector>
@@ -9,7 +9,7 @@
 
 // ------------------------------------------------------------------
 // 出清结果数据结构（界面消费的唯一接口，也是与 B 位引擎的对齐边界）
-//   2026-09-02 起 FakeEngine 内部已接入 B 位真实引擎 ClearMarket
+//   2026-09-02 起内部已接入 B 位真实引擎 ClearMarket
 //   （逐对撮合 + MCP/PAB 结算），界面与视角过滤零改动。
 // ------------------------------------------------------------------
 
@@ -48,13 +48,15 @@ struct ClearingResult
 };
 
 // ------------------------------------------------------------------
-// 引擎外壳：内部调用 B 位真实引擎（ClearMarket + MCP/PAB 结算）
+// 出清外观类 ClearingFacade（原 FakeEngine，2026-09-02 更名）：
+//   只做"构造入参 → 调真引擎 → 聚合结果"三件事，
+//   撮合与结算全部在 B 位真实引擎（ClearMarket + settle）内完成。
 //   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
 //   V1.3（#67）：申报数据带 period 维度，引擎逐时段取该时段申报撮合；
 //   窄表导入的数据已由 DataReader 展开为 96 期同量同价。
 // ------------------------------------------------------------------
 
-class FakeEngine
+class ClearingFacade
 {
 public:
     // 一键演示：单时段基准出清
@@ -74,4 +76,4 @@ private:
     static QString periodTime(int period, int periodCount);
 };
 
-#endif // FAKE_ENGINE_H
+#endif // CLEARING_FACADE_H

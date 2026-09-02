@@ -32,8 +32,8 @@ qt_add_executable(ClearingSim
 
     core/perspective.h
     core/app_session.h
-    core/fake_engine.h
-    core/fake_engine.cpp
+    core/clearing_facade.h
+    core/clearing_facade.cpp
 )
 
 target_include_directories(ClearingSim
