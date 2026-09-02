@@ -50,13 +50,9 @@ struct ClearingResult
 // ------------------------------------------------------------------
 // 引擎外壳：内部调用 B 位真实引擎（ClearMarket + MCP/PAB 结算）
 //   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
+//   V1.3（#67）：申报数据带 period 维度，引擎逐时段取该时段申报撮合；
+//   窄表导入的数据已由 DataReader 展开为 96 期同量同价。
 // ------------------------------------------------------------------
-// 申报表内此类机组的新能源出力由 P2 滑块直给，不参与申报撮合
-// （申报表仅作展示；撮合侧新能源 = 滑块 RENEW 0 价供给段）
-static inline bool isRenewableType(const QString &type)
-{
-    return type == QStringLiteral("风电") || type == QStringLiteral("光伏");
-}
 
 class FakeEngine
 {

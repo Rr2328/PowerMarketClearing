@@ -16,12 +16,15 @@
 
 namespace {
 
-// 购电侧申报总量（该时段需求）
-double totalDemand(const MarketData &market)
+// 指定时段的购电申报总量（该时段需求）
+//   period <= 0 的申报（手工构造的旧行为数据）视为全天恒量，计入每个时段
+double totalDemandAt(const MarketData &market, int period)
 {
     double sum = 0.0;
-    for (const auto &c : market.consumerBids)
-        sum += c.quantity;
+    for (const auto &c : market.consumerBids) {
+        if (c.period == period || c.period <= 0)
+            sum += c.quantity;
+    }
     return sum;
 }
 
@@ -32,10 +35,8 @@ double totalDemand(const MarketData &market)
 // ------------------------------------------------------------------
 ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QString &mode)
 {
-    // 基准例无负荷曲线：需求 = 购电侧申报总量
-    double demand = 0.0;
-    for (const auto &c : market.consumerBids)
-        demand += c.quantity;
+    // 基准例（窄表）已展开为 96 期同量同价：取时段 1 的申报，等价于旧单时段行为
+    const double demand = totalDemandAt(market, 1);
 
     ClearingResult result;
     result.mode = mode;
@@ -48,9 +49,9 @@ ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QStrin
 
 // ------------------------------------------------------------------
 // 开始仿真：连续出清（真引擎）
-//   2026-09-02 设计口径更新：负荷概念退场，平台与负荷无关。
-//   每时段需求 = 购电侧申报总量（恒定；待 96 时段宽表申报后按时段变化），
-//   新能源出力 = P2 滑块直给 MW（价格接受者，0 价优先中标）。
+//   V1.3（#67）：申报数据带 period 维度，逐时段取该时段申报撮合——
+//   每时段需求 = 该时段购电申报合计，新能源出力 = P2 滑块直给 MW
+//   （价格接受者，0 价优先中标；渗透率换算属 #88）。
 // ------------------------------------------------------------------
 ClearingResult FakeEngine::clearPeriods(const MarketData &market, int periodCount,
                                         double renewMW, const QString &mode)
@@ -59,12 +60,15 @@ ClearingResult FakeEngine::clearPeriods(const MarketData &market, int periodCoun
     result.mode = mode;
     result.sourceName = QStringLiteral("连续仿真 · 真引擎出清");
 
-    const double demand = totalDemand(market);
-    if (demand <= 0.0)
+    double anyDemand = 0.0;
+    for (const auto &c : market.consumerBids)
+        anyDemand += c.quantity;
+    if (anyDemand <= 0.0)
         return result;
 
     for (int period = 1; period <= periodCount; ++period) {
         const QString time = periodTime(period, periodCount);
+        const double demand = totalDemandAt(market, period);
         result.periods.append(
             clearOne(market, period, time, demand, renewMW, 1.0, mode));
     }
@@ -100,9 +104,9 @@ PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
     out.loadMW = demandMW;
     out.renewMW = renewMW;
 
-    // ---- 构造真引擎入参：发电侧 ----
+    // ---- 构造真引擎入参：发电侧（V1.3：只取该时段的申报） ----
     //   新能源 = P2 滑块直给 RENEW 0 价供给段（价格接受者，优先中标）；
-    //   申报表内风电/光伏机组仅为申报展示，不参与撮合（isRenewableType 过滤）。
+    //   申报表内已无风/光申报行（D4），无需类型过滤。
     QVector<Generator> generators;
     if (renewMW > 0.0) {
         Generator r;
@@ -115,21 +119,22 @@ PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
         generators.append(r);
     }
     for (const auto &g : market.generatorBids) {
-        if (isRenewableType(g.type))
-            continue;   // 新能源由滑块直给，申报段不进撮合
+        if (g.period > 0 && g.period != period)
+            continue;   // 逐时段申报：只取当前时段
         Generator e;
         e.id = g.id;
         e.name = g.name;
-        e.type = g.type;
         e.price = g.price;
         e.capacity = g.quantity * scale;
         e.segment = g.segment;
         generators.append(e);
     }
 
-    // ---- 购电侧：按契约 3.4 缩放 ----
+    // ---- 购电侧：只取该时段的申报 ----
     QVector<Consumer> consumers;
     for (const auto &c : market.consumerBids) {
+        if (c.period > 0 && c.period != period)
+            continue;
         Consumer e;
         e.id = c.id;
         e.name = c.name;

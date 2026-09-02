@@ -349,9 +349,9 @@ QWidget *MainWindow::buildImportPage()
 
     m_genTable = new QTableWidget(0, 6, bidBox);
     m_genTable->setHorizontalHeaderLabels({
-        QStringLiteral("机组ID"),
-        QStringLiteral("机组名称"),
-        QStringLiteral("机组类型"),
+        QStringLiteral("电厂名称"),
+        QStringLiteral("机组编号"),
+        QStringLiteral("时段"),
         QStringLiteral("申报段"),
         QStringLiteral("申报电价 (元/MWh)"),
         QStringLiteral("申报电量 (MWh)"),
@@ -362,10 +362,11 @@ QWidget *MainWindow::buildImportPage()
                                 | QAbstractItemView::AnyKeyPressed);
     m_genTable->setAlternatingRowColors(true);
 
-    m_conTable = new QTableWidget(0, 5, bidBox);
+    m_conTable = new QTableWidget(0, 6, bidBox);
     m_conTable->setHorizontalHeaderLabels({
-        QStringLiteral("用户ID"),
         QStringLiteral("用户名称"),
+        QStringLiteral("负荷编号"),
+        QStringLiteral("时段"),
         QStringLiteral("申报段"),
         QStringLiteral("申报电价 (元/MWh)"),
         QStringLiteral("申报电量 (MWh)"),
@@ -1175,34 +1176,35 @@ void MainWindow::refreshImportPage()
         return it;
     };
 
-    // 发电侧申报表
+    // 发电侧申报表（V1.3 长表：含时段列；#89 将改为单时段视图 + 时段选择器）
     if (m_genTable) {
         const auto &gs = m_session.market.generatorBids;
         m_loadingBids = true;                 // 填充期间屏蔽 itemChanged（防递归）
         m_genTable->setRowCount(gs.size());
         for (int i = 0; i < gs.size(); ++i) {
             const auto &g = gs[i];
-            m_genTable->setItem(i, 0, lockedItem(g.id));
-            m_genTable->setItem(i, 1, lockedItem(g.name));
-            m_genTable->setItem(i, 2, lockedItem(g.type));
+            m_genTable->setItem(i, 0, lockedItem(g.name));
+            m_genTable->setItem(i, 1, lockedItem(g.id));
+            m_genTable->setItem(i, 2, lockedItem(QString::number(g.period)));
             m_genTable->setItem(i, 3, lockedItem(QString::number(g.segment)));
             m_genTable->setItem(i, 4, new QTableWidgetItem(QString::number(g.price, 'f', 1)));
             m_genTable->setItem(i, 5, new QTableWidgetItem(QString::number(g.quantity, 'f', 1)));
         }
         m_loadingBids = false;
     }
-    // 购电侧申报表
+    // 购电侧申报表（V1.3 长表：含时段列）
     if (m_conTable) {
         const auto &cs = m_session.market.consumerBids;
         m_loadingBids = true;
         m_conTable->setRowCount(cs.size());
         for (int i = 0; i < cs.size(); ++i) {
             const auto &c = cs[i];
-            m_conTable->setItem(i, 0, lockedItem(c.id));
-            m_conTable->setItem(i, 1, lockedItem(c.name));
-            m_conTable->setItem(i, 2, lockedItem(QString::number(c.segment)));
-            m_conTable->setItem(i, 3, new QTableWidgetItem(QString::number(c.price, 'f', 1)));
-            m_conTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.quantity, 'f', 1)));
+            m_conTable->setItem(i, 0, lockedItem(c.name));
+            m_conTable->setItem(i, 1, lockedItem(c.id));
+            m_conTable->setItem(i, 2, lockedItem(QString::number(c.period)));
+            m_conTable->setItem(i, 3, lockedItem(QString::number(c.segment)));
+            m_conTable->setItem(i, 4, new QTableWidgetItem(QString::number(c.price, 'f', 1)));
+            m_conTable->setItem(i, 5, new QTableWidgetItem(QString::number(c.quantity, 'f', 1)));
         }
         m_loadingBids = false;
     }
@@ -1261,8 +1263,9 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         return;
     const int row = item->row();
     const int col = item->column();
-    const int priceCol = isGen ? 4 : 3;
-    const int qtyCol   = isGen ? 5 : 4;
+    // 两表列结构一致（V1.3）：…时段/申报段/电价(4)/电量(5)
+    const int priceCol = 4;
+    const int qtyCol   = 5;
     if (col != priceCol && col != qtyCol)
         return;
 
@@ -1291,9 +1294,9 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
             statusBar()->showMessage(QStringLiteral("申报电价需在 0~540 元/MWh 之间（限价规则）"), 6000);
             return;
         }
-        if (col == qtyCol && val <= 0.0) {
+        if (col == qtyCol && val < 0.0) {
             revert();
-            statusBar()->showMessage(QStringLiteral("申报电量需为正数"), 6000);
+            statusBar()->showMessage(QStringLiteral("申报电量需为非负数（0 = 该时段该段不申报/停机）"), 6000);
             return;
         }
         if (qFuzzyCompare(val + 1.0, oldVal + 1.0))   // 数值未变（仅文本格式差异）
@@ -1313,9 +1316,14 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         // 已有出清结果 → 立即重算并刷新各页
         if (m_session.hasResult && m_session.hasData) {
             rerunIfReady();
+            // 需求总量按单时段统计（V1.3 逐时段申报；窄表展开后各时段同量）
+            const int demandPeriod = m_session.market.consumerBids.isEmpty()
+                                         ? 1
+                                         : m_session.market.consumerBids.first().period;
             double demand = 0.0;
             for (const auto &c : m_session.market.consumerBids)
-                demand += c.quantity;
+                if (c.period == demandPeriod || c.period <= 0)
+                    demand += c.quantity;
             const auto &pr = m_session.result.periods.isEmpty()
                                  ? PeriodResult() : m_session.result.periods.first();
             statusBar()->showMessage(
@@ -1565,12 +1573,14 @@ void MainWindow::refreshChartPage()
             m_clearPoint->clear();
 
         struct Step { double qty; double price; };
+        // 时段截面（V1.3 逐时段申报）：取首时段出清结果对应的申报截面
+        const int chartPeriod = periods.isEmpty() ? 1 : periods[0].period;
         QVector<Step> gen;
-        // 供给 = 滑块新能源 RENEW（0 价，与撮合一致）+ 常规机组申报（风电/光伏由滑块直给，不画申报段）
+        // 供给 = 滑块新能源 RENEW（0 价，与撮合一致）+ 该时段常规机组申报
         if (m_session.renewMW > 0.0)
             gen.append({m_session.renewMW, 0.0});
         for (const auto &g : m_session.market.generatorBids) {
-            if (isRenewableType(g.type))
+            if (g.period > 0 && g.period != chartPeriod)
                 continue;
             gen.append({g.quantity, g.price});
         }
@@ -1578,8 +1588,11 @@ void MainWindow::refreshChartPage()
                   [](const Step &a, const Step &b) { return a.price < b.price; });
 
         QVector<Step> con;
-        for (const auto &c : m_session.market.consumerBids)
+        for (const auto &c : m_session.market.consumerBids) {
+            if (c.period > 0 && c.period != chartPeriod)
+                continue;
             con.append({c.quantity, c.price});
+        }
         std::sort(con.begin(), con.end(),
                   [](const Step &a, const Step &b) { return a.price > b.price; });
 

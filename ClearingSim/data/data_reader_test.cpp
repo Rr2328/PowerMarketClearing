@@ -196,7 +196,7 @@ int main(
         argv);
 
     qInfo().noquote()
-        << "========== DataReader V1.1 Test ==========";
+        << "========== DataReader V1.3 Test ==========";
 
     const QString repoRoot =
         findRepoRoot();
@@ -238,7 +238,7 @@ int main(
     MarketData marketData;
     QStringList errors;
 
-    bool ok =
+    bool     ok =
         DataReader::readAll(
             files,
             marketData,
@@ -246,7 +246,7 @@ int main(
 
     check(
         ok,
-        "V1.1 单文件规则读取四类真实数据");
+        "窄表基准例读取（自动展开 96 期）");
 
     if (!ok)
     {
@@ -269,10 +269,62 @@ int main(
         qInfo().noquote()
             << "Renewable outputs:"
             << marketData.renewableOutputs.size();
+
+        // 窄表展开：申报条数 = 原行数 × 96，且各时段同量同价
+        const int genRows =
+            marketData.generatorBids.size() / 96;
+
+        const int conRows =
+            marketData.consumerBids.size() / 96;
+
+        check(
+            genRows > 0 &&
+                marketData.generatorBids.size() ==
+                    genRows * 96,
+            "发电窄表展开为 96 期（行数 × 96）");
+
+        check(
+            conRows > 0 &&
+                marketData.consumerBids.size() ==
+                    conRows * 96,
+            "购电窄表展开为 96 期（行数 × 96）");
+
+        bool expandConsistent = true;
+
+        // 展开顺序：每个申报行连续展开 96 期（bids[i] 的 period = i%96+1，
+        // 基准行 = 同组首行）
+        for (int i = 0;
+             i < marketData.generatorBids.size();
+             ++i)
+        {
+            const GeneratorBid &base =
+                marketData.generatorBids[
+                    i - i % 96];
+
+            const GeneratorBid &item =
+                marketData.generatorBids[i];
+
+            if (item.period !=
+                    i % 96 + 1 ||
+                item.id != base.id ||
+                item.price !=
+                    base.price ||
+                item.quantity !=
+                    base.quantity)
+            {
+                expandConsistent = false;
+
+                break;
+            }
+        }
+
+        check(
+            expandConsistent,
+            "窄表展开各时段同量同价（对拍锚点等价性）");
     }
 
 
-    // 当前样例跨文件关系
+    // V1.3：跨文件校验不再阻断（新能源不进申报表；平衡偏差改 P1 提示）
     errors.clear();
 
     ok =
@@ -281,8 +333,8 @@ int main(
             errors);
 
     check(
-        !ok,
-        "识别当前样例跨文件不一致");
+        ok,
+        "跨文件校验通过（V1.3：无阻断项）");
 
     if (!ok)
     {
@@ -290,102 +342,117 @@ int main(
     }
 
 
-    // 构造一份关系一致的数据
-    MarketData alignedData =
-        marketData;
+    // V1.3 长表真实样例（scenario 双侧逐时段申报）
+    DataFileSet scenarioFiles;
 
-    QSet<QString> existingIds;
+    scenarioFiles.generatorBidsFile =
+        repoRoot +
+        "/data/samples/scenario/generator_bids.csv";
 
-    for (const GeneratorBid &item :
-         alignedData.generatorBids)
-    {
-        existingIds.insert(
-            item.id);
-    }
+    scenarioFiles.consumerBidsFile =
+        repoRoot +
+        "/data/samples/scenario/consumer_bids.csv";
 
-    QHash<QString, QString>
-        renewableTypes;
+    scenarioFiles.loadCurveFile =
+        repoRoot +
+        "/data/samples/curves/load_curve.csv";
 
-    for (const RenewableOutput &item :
-         alignedData.renewableOutputs)
-    {
-        renewableTypes[
-            item.generatorId] =
-            item.generatorType;
-    }
+    scenarioFiles.renewableOutputFile =
+        repoRoot +
+        "/data/samples/curves/renewable_output.csv";
 
-    for (auto it =
-         renewableTypes.cbegin();
-         it != renewableTypes.cend();
-         ++it)
-    {
-        if (existingIds.contains(
-                it.key()))
-        {
-            continue;
-        }
-
-        GeneratorBid item;
-
-        item.id = it.key();
-        item.name = it.key();
-        item.type = it.value();
-        item.segment = 1;
-        item.price = 0.0;
-        item.quantity = 1.0;
-
-        alignedData.generatorBids
-            .push_back(item);
-    }
-
-    double loadEnergy =
-        0.0;
-
-    for (const LoadPoint &item :
-         alignedData.loadCurve)
-    {
-        loadEnergy +=
-            item.load * 0.25;
-    }
-
-    if (!alignedData.consumerBids
-             .isEmpty())
-    {
-        double otherEnergy =
-            0.0;
-
-        for (int i = 1;
-             i <
-             alignedData.consumerBids.size();
-             ++i)
-        {
-            otherEnergy +=
-                alignedData
-                    .consumerBids[i]
-                    .quantity;
-        }
-
-        alignedData
-            .consumerBids[0]
-            .quantity =
-            loadEnergy -
-            otherEnergy;
-    }
+    MarketData scenarioData;
 
     errors.clear();
 
     ok =
-        DataReader::validateRelations(
-            alignedData,
+        DataReader::readAll(
+            scenarioFiles,
+            scenarioData,
             errors);
 
     check(
         ok,
-        "跨文件一致数据通过校验");
+        "V1.3 长表样例读取（双侧逐时段）");
 
     if (!ok)
     {
         printErrors(errors);
+    }
+    else
+    {
+        // 每个主体（电厂名称+机组编号）必须覆盖 96 个时段
+        QHash<QString, QSet<int>>
+            genPeriods;
+
+        for (const GeneratorBid &item :
+             scenarioData.generatorBids)
+        {
+            genPeriods[item.name + "|" +
+                       item.id]
+                .insert(item.period);
+        }
+
+        bool allCovered = true;
+
+        for (auto it =
+             genPeriods.cbegin();
+             it != genPeriods.cend();
+             ++it)
+        {
+            if (it.value().size() != 96)
+            {
+                allCovered = false;
+
+                break;
+            }
+        }
+
+        check(
+            allCovered &&
+                !genPeriods.isEmpty(),
+            "长表发电主体全部覆盖 96 时段");
+
+        QHash<QString, QSet<int>>
+            conPeriods;
+
+        for (const ConsumerBid &item :
+             scenarioData.consumerBids)
+        {
+            conPeriods[item.name + "|" +
+                       item.id]
+                .insert(item.period);
+        }
+
+        bool conCovered = true;
+
+        for (auto it =
+             conPeriods.cbegin();
+             it != conPeriods.cend();
+             ++it)
+        {
+            if (it.value().size() != 96)
+            {
+                conCovered = false;
+
+                break;
+            }
+        }
+
+        check(
+            conCovered &&
+                !conPeriods.isEmpty(),
+            "长表购电主体全部覆盖 96 时段");
+
+        // 跨厂重号检查：机组编号可重号（金陵 #1 / 龙潭 #1），身份 = 名称+编号
+        check(
+            genPeriods.contains(
+                QStringLiteral(
+                    "金陵电厂|#1机组")) &&
+                genPeriods.contains(
+                    QStringLiteral(
+                        "龙潭电厂|#1机组")),
+            "机组编号跨厂重号共存（身份 = 电厂名称+机组编号）");
     }
 
 
@@ -556,7 +623,7 @@ int main(
             "识别 0~540 电价限制");
 
 
-        // 电量为 0
+        // 电量为 0：V1.3 规则⑥允许（该时段不申报/停机）
         const QString zeroQuantityFile =
             tempDir.path() +
             "/zero_quantity.csv";
@@ -575,8 +642,36 @@ int main(
                 errors);
 
         check(
+            ok,
+            "申报电量 0 合法（V1.3 规则⑥：停机申报）");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 电量为负
+        const QString negativeQuantityFile =
+            tempDir.path() +
+            "/negative_quantity.csv";
+
+        writeTextFile(
+            negativeQuantityFile,
+            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
+            "G1,一号火电,火电,1,150.000,-5.0\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                negativeQuantityFile,
+                generators,
+                errors);
+
+        check(
             !ok,
-            "识别申报电量必须大于 0");
+            "识别申报电量为负");
 
 
         // 小数精度错误
@@ -600,6 +695,57 @@ int main(
         check(
             !ok,
             "识别申报价格小数精度错误");
+
+
+        // 长表表头段列不成对（5 列 = 3 基础列 + 1 段出力，缺段报价）
+        const QString badLongHeaderFile =
+            tempDir.path() +
+            "/bad_long_header.csv";
+
+        writeTextFile(
+            badLongHeaderFile,
+            "period,电厂名称,机组编号,第1段出力(MW)\n"
+            "1,金陵电厂,#1机组,100.0\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                badLongHeaderFile,
+                generators,
+                errors);
+
+        check(
+            !ok,
+            "识别长表表头段列不成对");
+
+        if (!ok)
+        {
+            printErrors(errors);
+        }
+
+
+        // 长表时段覆盖不足（主体只申报 1 个时段）
+        const QString shortLongFile =
+            tempDir.path() +
+            "/short_long.csv";
+
+        writeTextFile(
+            shortLongFile,
+            "period,电厂名称,机组编号,第1段出力(MW),第1段报价(元/MWh)\n"
+            "1,金陵电厂,#1机组,100.0,150.000\n");
+
+        errors.clear();
+
+        ok =
+            DataReader::readGeneratorBids(
+                shortLongFile,
+                generators,
+                errors);
+
+        check(
+            !ok,
+            "识别长表主体未覆盖 96 时段");
 
 
         // 负荷不足 96 点
@@ -653,7 +799,7 @@ int main(
     if (failedTests == 0)
     {
         qInfo().noquote()
-        << "All DataReader V1.1 tests passed.";
+        << "All DataReader V1.3 tests passed.";
 
         return 0;
     }
