@@ -1,10 +1,41 @@
 #include "scenario_manager.h"
 
 #include <QMap>
-#include <QSet>
 
 namespace
 {
+
+// 获取时段数量
+int periodCount(
+    TimeGranularity granularity)
+{
+    switch (granularity)
+    {
+    case TimeGranularity::Hourly24:
+        return 24;
+
+    case TimeGranularity::QuarterHourly96:
+        return 96;
+    }
+
+    return 0;
+}
+
+// 获取单时段长度
+double intervalHours(
+    TimeGranularity granularity)
+{
+    switch (granularity)
+    {
+    case TimeGranularity::Hourly24:
+        return 1.0;
+
+    case TimeGranularity::QuarterHourly96:
+        return 0.25;
+    }
+
+    return 0.0;
+}
 
 // 24 时段时间标签
 QString hourText(int period)
@@ -34,7 +65,8 @@ bool buildLoadMap(
     if (data.size() != expectedCount)
     {
         errors.append(
-            QString("负荷数据应包含 %1 个时段，实际为 %2 个")
+            QString(
+                "负荷数据应包含 %1 个时段，实际为 %2 个")
                 .arg(expectedCount)
                 .arg(data.size()));
 
@@ -47,7 +79,8 @@ bool buildLoadMap(
             item.period > expectedCount)
         {
             errors.append(
-                QString("负荷时段 %1 超出 1~%2 范围")
+                QString(
+                    "负荷时段 %1 超出 1~%2 范围")
                     .arg(item.period)
                     .arg(expectedCount));
 
@@ -57,7 +90,8 @@ bool buildLoadMap(
         if (loadMap.contains(item.period))
         {
             errors.append(
-                QString("负荷时段 %1 重复")
+                QString(
+                    "负荷时段 %1 重复")
                     .arg(item.period));
 
             continue;
@@ -75,7 +109,8 @@ bool buildLoadMap(
         if (!loadMap.contains(period))
         {
             errors.append(
-                QString("负荷数据缺少时段 %1")
+                QString(
+                    "负荷数据缺少时段 %1")
                     .arg(period));
         }
     }
@@ -108,7 +143,8 @@ bool buildRenewableMap(
             item.period > expectedCount)
         {
             errors.append(
-                QString("新能源机组 %1 的时段 %2 超出 1~%3 范围")
+                QString(
+                    "新能源机组 %1 的时段 %2 超出 1~%3 范围")
                     .arg(item.generatorId)
                     .arg(item.period)
                     .arg(expectedCount));
@@ -121,7 +157,8 @@ bool buildRenewableMap(
                 item.generatorType)
         {
             errors.append(
-                QString("新能源机组 %1 的类型不一致")
+                QString(
+                    "新能源机组 %1 的类型不一致")
                     .arg(item.generatorId));
 
             continue;
@@ -131,7 +168,8 @@ bool buildRenewableMap(
                 .contains(item.period))
         {
             errors.append(
-                QString("新能源机组 %1 的时段 %2 重复")
+                QString(
+                    "新能源机组 %1 的时段 %2 重复")
                     .arg(item.generatorId)
                     .arg(item.period));
 
@@ -161,7 +199,8 @@ bool buildRenewableMap(
         if (periods.size() != expectedCount)
         {
             errors.append(
-                QString("新能源机组 %1 应包含 %2 个时段，实际为 %3 个")
+                QString(
+                    "新能源机组 %1 应包含 %2 个时段，实际为 %3 个")
                     .arg(generatorId)
                     .arg(expectedCount)
                     .arg(periods.size()));
@@ -176,7 +215,8 @@ bool buildRenewableMap(
             if (!periods.contains(period))
             {
                 errors.append(
-                    QString("新能源机组 %1 缺少时段 %2")
+                    QString(
+                        "新能源机组 %1 缺少时段 %2")
                         .arg(generatorId)
                         .arg(period));
 
@@ -211,14 +251,16 @@ bool ScenarioManager::aggregateLoadTo24(
         return false;
     }
 
+    load24.reserve(24);
+
     for (int hour = 1;
          hour <= 24;
          ++hour)
     {
-        double total = 0.0;
-
         const int firstPeriod =
             (hour - 1) * 4 + 1;
+
+        double total = 0.0;
 
         for (int offset = 0;
              offset < 4;
@@ -264,6 +306,9 @@ bool ScenarioManager::aggregateRenewableTo24(
         return false;
     }
 
+    renewable24.reserve(
+        renewableMap.size() * 24);
+
     for (auto generatorIt =
          renewableMap.cbegin();
          generatorIt != renewableMap.cend();
@@ -306,11 +351,8 @@ bool ScenarioManager::aggregateRenewableTo24(
             item.generatorType =
                 generatorType;
 
-            item.period =
-                hour;
-
-            item.output =
-                total / 4.0;
+            item.period = hour;
+            item.output = total / 4.0;
 
             renewable24.push_back(item);
         }
@@ -323,17 +365,33 @@ bool ScenarioManager::aggregateRenewableTo24(
 // 构建逐时段场景
 bool ScenarioManager::buildPeriodScenarios(
     const MarketData &data,
-    int periodCount,
+    TimeGranularity granularity,
     QVector<PeriodScenario> &scenarios,
     QStringList &errors)
 {
     scenarios.clear();
     errors.clear();
 
+    const int count =
+        periodCount(granularity);
+
+    const double hours =
+        intervalHours(granularity);
+
+    if (count == 0 ||
+        hours <= 0.0)
+    {
+        errors.append(
+            "无效的时段颗粒度");
+
+        return false;
+    }
+
     QVector<LoadPoint> loadData;
     QVector<RenewableOutput> renewableData;
 
-    if (periodCount == 96)
+    if (granularity ==
+        TimeGranularity::QuarterHourly96)
     {
         loadData =
             data.loadCurve;
@@ -341,7 +399,7 @@ bool ScenarioManager::buildPeriodScenarios(
         renewableData =
             data.renewableOutputs;
     }
-    else if (periodCount == 24)
+    else
     {
         QStringList tempErrors;
 
@@ -368,19 +426,12 @@ bool ScenarioManager::buildPeriodScenarios(
             return false;
         }
     }
-    else
-    {
-        errors.append(
-            "时段数量只能选择 24 或 96");
-
-        return false;
-    }
 
     QMap<int, LoadPoint> loadMap;
 
     if (!buildLoadMap(
             loadData,
-            periodCount,
+            count,
             loadMap,
             errors))
     {
@@ -392,29 +443,36 @@ bool ScenarioManager::buildPeriodScenarios(
 
     if (!buildRenewableMap(
             renewableData,
-            periodCount,
+            count,
             renewableMap,
             errors))
     {
         return false;
     }
 
+    scenarios.reserve(count);
+
     for (int period = 1;
-         period <= periodCount;
+         period <= count;
          ++period)
     {
         PeriodScenario scenario;
 
-        scenario.period =
-            period;
+        scenario.period = period;
 
         scenario.time =
             loadMap.value(period)
                 .time;
 
+        scenario.intervalHours =
+            hours;
+
         scenario.loadMW =
             loadMap.value(period)
                 .load;
+
+        scenario.renewableBase.reserve(
+            renewableMap.size());
 
         for (auto generatorIt =
              renewableMap.cbegin();
@@ -423,7 +481,8 @@ bool ScenarioManager::buildPeriodScenarios(
         {
             scenario.renewableBase
                 .push_back(
-                    generatorIt.value()
+                    generatorIt
+                        .value()
                         .value(period));
         }
 

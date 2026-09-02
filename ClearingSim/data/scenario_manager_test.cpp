@@ -96,6 +96,26 @@ void printErrors(
     }
 }
 
+// 查找新能源数据
+bool findRenewable(
+    const QVector<RenewableOutput> &data,
+    const QString &generatorId,
+    int period,
+    RenewableOutput &result)
+{
+    for (const RenewableOutput &item : data)
+    {
+        if (item.generatorId == generatorId &&
+            item.period == period)
+        {
+            result = item;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 } // namespace
 
 
@@ -184,8 +204,6 @@ int main(
         printErrors(errors);
     }
 
-
-    // 检查首小时平均值
     if (data.loadCurve.size() >= 4 &&
         !load24.isEmpty())
     {
@@ -241,6 +259,55 @@ int main(
     }
 
 
+    // 检查新能源首小时平均值
+    if (!data.renewableOutputs.isEmpty())
+    {
+        const QString generatorId =
+            data.renewableOutputs[0]
+                .generatorId;
+
+        double total = 0.0;
+        bool sourceFound = true;
+
+        for (int period = 1;
+             period <= 4;
+             ++period)
+        {
+            RenewableOutput item;
+
+            if (!findRenewable(
+                    data.renewableOutputs,
+                    generatorId,
+                    period,
+                    item))
+            {
+                sourceFound = false;
+                break;
+            }
+
+            total += item.output;
+        }
+
+        RenewableOutput aggregated;
+
+        const bool targetFound =
+            findRenewable(
+                renewable24,
+                generatorId,
+                1,
+                aggregated);
+
+        check(
+            sourceFound &&
+                targetFound &&
+                std::abs(
+                    aggregated.output -
+                    total / 4.0) <
+                    0.000001,
+            "24 时段新能源采用相邻 4 点平均");
+    }
+
+
     // 构建 96 时段场景
     QVector<PeriodScenario> scenarios96;
 
@@ -250,7 +317,8 @@ int main(
         ScenarioManager::
         buildPeriodScenarios(
             data,
-            96,
+            TimeGranularity::
+            QuarterHourly96,
             scenarios96,
             errors);
 
@@ -271,6 +339,23 @@ int main(
                     .size() ==
                 renewableIds.size(),
             "96 时段场景包含全部新能源机组");
+
+        check(
+            std::abs(
+                scenarios96[0]
+                    .intervalHours -
+                0.25) <
+                0.000001,
+            "96 时段长度为 0.25 小时");
+
+        check(
+            std::abs(
+                scenarios96[0]
+                    .loadMW -
+                data.loadCurve[0]
+                    .load) <
+                0.000001,
+            "96 时段场景负荷值正确");
     }
 
     if (!ok)
@@ -288,7 +373,8 @@ int main(
         ScenarioManager::
         buildPeriodScenarios(
             data,
-            24,
+            TimeGranularity::
+            Hourly24,
             scenarios24,
             errors);
 
@@ -309,6 +395,24 @@ int main(
                     .size() ==
                 renewableIds.size(),
             "24 时段场景包含全部新能源机组");
+
+        check(
+            std::abs(
+                scenarios24[0]
+                    .intervalHours -
+                1.0) <
+                0.000001,
+            "24 时段长度为 1 小时");
+
+        check(
+            !load24.isEmpty() &&
+                std::abs(
+                    scenarios24[0]
+                        .loadMW -
+                    load24[0]
+                        .load) <
+                    0.000001,
+            "24 时段场景负荷值正确");
     }
 
     if (!ok)
@@ -326,7 +430,8 @@ int main(
         ScenarioManager::
         buildPeriodScenarios(
             data,
-            48,
+            static_cast<
+                TimeGranularity>(48),
             invalidScenarios,
             errors);
 
@@ -352,7 +457,8 @@ int main(
         ScenarioManager::
         buildPeriodScenarios(
             brokenLoad,
-            96,
+            TimeGranularity::
+            QuarterHourly96,
             invalidScenarios,
             errors);
 
@@ -380,7 +486,8 @@ int main(
         ScenarioManager::
         buildPeriodScenarios(
             brokenRenewable,
-            96,
+            TimeGranularity::
+            QuarterHourly96,
             invalidScenarios,
             errors);
 

@@ -2,8 +2,6 @@
 
 #include <QFile>
 #include <QHash>
-#include <QMap>
-#include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
 #include <QTextStream>
@@ -19,23 +17,6 @@ struct CsvRow
     QStringList columns;
 };
 
-void addError(
-    QStringList &errors,
-    const QString &prefix,
-    const QString &message)
-{
-    if (prefix.isEmpty())
-    {
-        errors.append(message);
-    }
-    else
-    {
-        errors.append(
-            prefix + " · " + message);
-    }
-}
-
-// CSV 行分割
 QStringList splitCsvLine(const QString &line)
 {
     QStringList columns =
@@ -55,11 +36,43 @@ QStringList splitCsvLine(const QString &line)
     return columns;
 }
 
-// CSV 公共读取函数
+
+bool checkHeader(
+    const QStringList &actualHeader,
+    const QStringList &expectedHeader,
+    QStringList &errors)
+{
+    if (actualHeader.size() != expectedHeader.size())
+    {
+        errors.append(
+            QString("CSV 表头列数错误：应为 %1 列，实际为 %2 列")
+                .arg(expectedHeader.size())
+                .arg(actualHeader.size()));
+
+        return false;
+    }
+
+    for (int i = 0; i < expectedHeader.size(); ++i)
+    {
+        if (actualHeader[i] != expectedHeader[i])
+        {
+            errors.append(
+                QString("CSV 表头第 %1 列错误：应为“%2”，实际为“%3”")
+                    .arg(i + 1)
+                    .arg(expectedHeader[i])
+                    .arg(actualHeader[i]));
+
+            return false;
+        }
+    }
+
+    return true;
+}
+
+
 bool readCsvRows(
     const QString &filePath,
     const QStringList &expectedHeader,
-    const QString &prefix,
     QVector<CsvRow> &rows,
     QStringList &errors)
 {
@@ -69,23 +82,13 @@ bool readCsvRows(
 
     if (!file.exists())
     {
-        addError(
-            errors,
-            prefix,
-            "文件不存在：" + filePath);
-
+        errors.append("文件不存在：" + filePath);
         return false;
     }
 
-    if (!file.open(
-            QIODevice::ReadOnly |
-            QIODevice::Text))
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
     {
-        addError(
-            errors,
-            prefix,
-            "文件无法打开：" + filePath);
-
+        errors.append("文件无法打开：" + filePath);
         return false;
     }
 
@@ -93,26 +96,27 @@ bool readCsvRows(
 
     if (in.atEnd())
     {
-        addError(
-            errors,
-            prefix,
-            "CSV 文件为空：" + filePath);
+        errors.append("CSV 文件为空：" + filePath);
+        return false;
+    }
 
+    const QString headerLine =
+        in.readLine().trimmed();
+
+    if (headerLine.isEmpty())
+    {
+        errors.append("CSV 表头为空：" + filePath);
         return false;
     }
 
     const QStringList header =
-        splitCsvLine(
-            in.readLine().trimmed());
+        splitCsvLine(headerLine);
 
-    if (header != expectedHeader)
+    if (!checkHeader(
+            header,
+            expectedHeader,
+            errors))
     {
-        addError(
-            errors,
-            prefix,
-            "CSV 表头不匹配，应为：" +
-                expectedHeader.join(','));
-
         return false;
     }
 
@@ -135,11 +139,8 @@ bool readCsvRows(
 
         if (columns.size() != expectedHeader.size())
         {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行列数错误：应为 %2 列，实际为 %3 列")
+            errors.append(
+                QString("第 %1 行列数错误：应为 %2 列，实际为 %3 列")
                     .arg(lineNumber)
                     .arg(expectedHeader.size())
                     .arg(columns.size()));
@@ -158,11 +159,9 @@ bool readCsvRows(
     {
         if (errors.isEmpty())
         {
-            addError(
-                errors,
-                prefix,
+            errors.append(
                 "CSV 文件中没有有效数据：" +
-                    filePath);
+                filePath);
         }
 
         return false;
@@ -171,19 +170,16 @@ bool readCsvRows(
     return errors.isEmpty();
 }
 
-// 空字段检查
+
 bool checkNotEmpty(
     const QString &value,
     int lineNumber,
     const QString &fieldName,
-    const QString &prefix,
     QStringList &errors)
 {
     if (value.trimmed().isEmpty())
     {
-        addError(
-            errors,
-            prefix,
+        errors.append(
             QString("第 %1 行 %2 为空")
                 .arg(lineNumber)
                 .arg(fieldName));
@@ -194,26 +190,21 @@ bool checkNotEmpty(
     return true;
 }
 
-// 正整数检查
+
 bool parsePositiveInt(
     const QString &text,
     int &value,
     int lineNumber,
     const QString &fieldName,
-    const QString &prefix,
     QStringList &errors)
 {
     bool ok = false;
-
     value = text.toInt(&ok);
 
     if (!ok)
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 不是有效整数：%3")
+        errors.append(
+            QString("第 %1 行 %2 不是有效整数：%3")
                 .arg(lineNumber)
                 .arg(fieldName)
                 .arg(text));
@@ -223,11 +214,8 @@ bool parsePositiveInt(
 
     if (value <= 0)
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 必须大于 0")
+        errors.append(
+            QString("第 %1 行 %2 必须大于 0")
                 .arg(lineNumber)
                 .arg(fieldName));
 
@@ -237,58 +225,22 @@ bool parsePositiveInt(
     return true;
 }
 
-// 小数位数检查
-bool checkPrecision(
-    const QString &text,
-    int decimals,
-    int lineNumber,
-    const QString &fieldName,
-    const QString &prefix,
-    QStringList &errors)
-{
-    const QRegularExpression expression(
-        QString("^\\d+\\.\\d{%1}$")
-            .arg(decimals));
 
-    if (!expression.match(text).hasMatch())
-    {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 应保留 %3 位小数：%4")
-                .arg(lineNumber)
-                .arg(fieldName)
-                .arg(decimals)
-                .arg(text));
-
-        return false;
-    }
-
-    return true;
-}
-
-// 浮点数检查
 bool parseDouble(
     const QString &text,
     double &value,
     int lineNumber,
     const QString &fieldName,
-    const QString &prefix,
     QStringList &errors)
 {
     bool ok = false;
-
     value = text.toDouble(&ok);
 
     if (!ok ||
         !std::isfinite(value))
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 不是有效数字：%3")
+        errors.append(
+            QString("第 %1 行 %2 不是有效数字：%3")
                 .arg(lineNumber)
                 .arg(fieldName)
                 .arg(text));
@@ -299,166 +251,19 @@ bool parseDouble(
     return true;
 }
 
-// 申报价格检查
-bool parsePrice(
-    const QString &text,
-    double &value,
-    int lineNumber,
-    const QString &prefix,
-    QStringList &errors)
-{
-    if (!checkPrecision(
-            text,
-            3,
-            lineNumber,
-            "申报电价",
-            prefix,
-            errors))
-    {
-        return false;
-    }
 
-    if (!parseDouble(
-            text,
-            value,
-            lineNumber,
-            "申报电价",
-            prefix,
-            errors))
-    {
-        return false;
-    }
-
-    if (value < 0.0 ||
-        value > 540.0)
-    {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行申报电价必须在 0~540 元/MWh")
-                .arg(lineNumber));
-
-        return false;
-    }
-
-    return true;
-}
-
-// 正电量检查
-bool parsePositiveQuantity(
-    const QString &text,
-    double &value,
-    int lineNumber,
-    const QString &prefix,
-    QStringList &errors)
-{
-    if (!checkPrecision(
-            text,
-            1,
-            lineNumber,
-            "申报电量",
-            prefix,
-            errors))
-    {
-        return false;
-    }
-
-    if (!parseDouble(
-            text,
-            value,
-            lineNumber,
-            "申报电量",
-            prefix,
-            errors))
-    {
-        return false;
-    }
-
-    if (value <= 0.0)
-    {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行申报电量必须大于 0")
-                .arg(lineNumber));
-
-        return false;
-    }
-
-    return true;
-}
-
-// 正功率检查
-bool parsePositivePower(
+bool parseNonNegativeDouble(
     const QString &text,
     double &value,
     int lineNumber,
     const QString &fieldName,
     QStringList &errors)
 {
-    if (!checkPrecision(
-            text,
-            1,
-            lineNumber,
-            fieldName,
-            QString(),
-            errors))
-    {
-        return false;
-    }
-
     if (!parseDouble(
             text,
             value,
             lineNumber,
             fieldName,
-            QString(),
-            errors))
-    {
-        return false;
-    }
-
-    if (value <= 0.0)
-    {
-        errors.append(
-            QString(
-                "第 %1 行 %2 必须大于 0")
-                .arg(lineNumber)
-                .arg(fieldName));
-
-        return false;
-    }
-
-    return true;
-}
-
-// 非负功率检查
-bool parseNonNegativePower(
-    const QString &text,
-    double &value,
-    int lineNumber,
-    const QString &fieldName,
-    QStringList &errors)
-{
-    if (!checkPrecision(
-            text,
-            1,
-            lineNumber,
-            fieldName,
-            QString(),
-            errors))
-    {
-        return false;
-    }
-
-    if (!parseDouble(
-            text,
-            value,
-            lineNumber,
-            fieldName,
-            QString(),
             errors))
     {
         return false;
@@ -467,8 +272,7 @@ bool parseNonNegativePower(
     if (value < 0.0)
     {
         errors.append(
-            QString(
-                "第 %1 行 %2 不能为负数")
+            QString("第 %1 行 %2 不能为负数")
                 .arg(lineNumber)
                 .arg(fieldName));
 
@@ -478,54 +282,141 @@ bool parseNonNegativePower(
     return true;
 }
 
-// 时段对应时间
-QString expectedTime(int period)
-{
-    const int totalMinutes =
-        period * 15;
 
-    if (totalMinutes == 24 * 60)
+bool checkPricePrecision(
+    const QString &text,
+    int lineNumber,
+    const QString &fieldName,
+    QStringList &errors)
+{
+    const QString value =
+        text.trimmed();
+
+    if (value.contains('e', Qt::CaseInsensitive))
     {
-        return "24:00";
+        errors.append(
+            QString("第 %1 行 %2 不允许使用科学计数法")
+                .arg(lineNumber)
+                .arg(fieldName));
+
+        return false;
     }
 
-    const int hour =
-        totalMinutes / 60;
+    const int dotIndex =
+        value.indexOf('.');
 
-    const int minute =
-        totalMinutes % 60;
+    if (dotIndex < 0)
+    {
+        return true;
+    }
 
-    return QString("%1:%2")
-        .arg(
-            hour,
-            2,
-            10,
-            QChar('0'))
-        .arg(
-            minute,
-            2,
-            10,
-            QChar('0'));
+    const int decimalPlaces =
+        value.size() -
+        dotIndex -
+        1;
+
+    if (decimalPlaces > 3)
+    {
+        errors.append(
+            QString("第 %1 行 %2 最多保留 3 位小数")
+                .arg(lineNumber)
+                .arg(fieldName));
+
+        return false;
+    }
+
+    return true;
 }
 
-// 合并错误信息
+
+bool checkPriceRange(
+    double price,
+    int lineNumber,
+    const QString &fieldName,
+    QStringList &errors)
+{
+    if (price < 0.0 ||
+        price > 540.0)
+    {
+        errors.append(
+            QString("第 %1 行 %2 必须在 0～540 元/MWh 范围内")
+                .arg(lineNumber)
+                .arg(fieldName));
+
+        return false;
+    }
+
+    return true;
+}
+
+
+QStringList generatorHeader()
+{
+    QStringList header;
+
+    header
+        << "电厂名称"
+        << "机组编号"
+        << "机组类型";
+
+    for (int segment = 1;
+         segment <= 10;
+         ++segment)
+    {
+        header
+            << QString("出力P%1(MW)")
+                   .arg(segment)
+            << QString("报价C%1(元/MWh)")
+                   .arg(segment);
+    }
+
+    return header;
+}
+
+
+QStringList consumerHeader()
+{
+    QStringList header;
+
+    header
+        << "用户名称"
+        << "用户编号";
+
+    for (int segment = 1;
+         segment <= 10;
+         ++segment)
+    {
+        header
+            << QString("购电量P%1(MWh)")
+                   .arg(segment)
+            << QString("报价C%1(元/MWh)")
+                   .arg(segment);
+    }
+
+    return header;
+}
+
+
 void appendErrors(
     const QString &fileName,
     const QStringList &sourceErrors,
     QStringList &targetErrors)
 {
-    for (const QString &error : sourceErrors)
+    for (const QString &error :
+         sourceErrors)
     {
         targetErrors.append(
-            "[" + fileName + "] " +
+            "[" +
+            fileName +
+            "] " +
             error);
     }
 }
 
-} // namespace
+}
 
 
-// 发电侧申报读取
+// 发电侧
 bool DataReader::readGeneratorBids(
     const QString &filePath,
     QVector<GeneratorBid> &data,
@@ -534,303 +425,278 @@ bool DataReader::readGeneratorBids(
     data.clear();
     errors.clear();
 
-    const QString prefix =
-        "发电";
-
-    const QStringList expectedHeader =
-        {
-            "机组ID",
-            "机组名称",
-            "机组类型",
-            "申报段",
-            "申报电价(元/MWh)",
-            "申报电量(MWh)"
-        };
+    constexpr int maxSegments = 10;
+    constexpr int baseColumns = 3;
 
     QVector<CsvRow> rows;
 
     if (!readCsvRows(
             filePath,
-            expectedHeader,
-            prefix,
+            generatorHeader(),
             rows,
             errors))
     {
         return false;
     }
 
-    const QSet<QString> allowedTypes =
-        {
-            "火电",
-            "水电",
-            "风电",
-            "光伏"
-        };
-
     QVector<GeneratorBid> tempData;
 
-    QSet<QString> segmentKeys;
+    QSet<QString> unitIds;
 
-    QHash<QString, QString> idToName;
-    QHash<QString, QString> idToType;
-    QHash<QString, QString> nameToId;
-
-    QMap<QString, QMap<int, double>>
-        pricesByGenerator;
-
-    for (const CsvRow &row : rows)
+    for (const CsvRow &row :
+         rows)
     {
         const QStringList &c =
             row.columns;
 
-        GeneratorBid item;
+        const QString plantName =
+            c[0];
 
-        item.id = c[0];
-        item.name = c[1];
-        item.type = c[2];
+        const QString unitId =
+            c[1];
+
+        const QString unitType =
+            c[2];
 
         bool rowValid = true;
 
         if (!checkNotEmpty(
-                item.id,
+                plantName,
                 row.lineNumber,
-                "机组 ID",
-                prefix,
+                "电厂名称",
                 errors))
         {
             rowValid = false;
         }
 
         if (!checkNotEmpty(
-                item.name,
+                unitId,
                 row.lineNumber,
-                "机组名称",
-                prefix,
+                "机组编号",
                 errors))
         {
             rowValid = false;
         }
 
         if (!checkNotEmpty(
-                item.type,
+                unitType,
                 row.lineNumber,
                 "机组类型",
-                prefix,
                 errors))
         {
             rowValid = false;
         }
 
-        if (!allowedTypes.contains(
-                item.type))
+        if (!unitId.isEmpty())
         {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行机组类型只能为火电、水电、风电或光伏")
-                    .arg(row.lineNumber));
-
-            rowValid = false;
-        }
-
-        if (!parsePositiveInt(
-                c[3],
-                item.segment,
-                row.lineNumber,
-                "申报段",
-                prefix,
-                errors))
-        {
-            rowValid = false;
-        }
-        else if (item.segment > 5)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行申报段不能超过 5")
-                    .arg(row.lineNumber));
-
-            rowValid = false;
-        }
-
-        if (!parsePrice(
-                c[4],
-                item.price,
-                row.lineNumber,
-                prefix,
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!parsePositiveQuantity(
-                c[5],
-                item.quantity,
-                row.lineNumber,
-                prefix,
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!rowValid)
-        {
-            continue;
-        }
-
-        if (idToName.contains(item.id) &&
-            idToName.value(item.id) != item.name)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行机组 %2 的名称与前面不一致")
-                    .arg(row.lineNumber)
-                    .arg(item.id));
-
-            continue;
-        }
-
-        if (idToType.contains(item.id) &&
-            idToType.value(item.id) != item.type)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行机组 %2 的类型与前面不一致")
-                    .arg(row.lineNumber)
-                    .arg(item.id));
-
-            continue;
-        }
-
-        if (nameToId.contains(item.name) &&
-            nameToId.value(item.name) != item.id)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行机组名称重复：%2")
-                    .arg(row.lineNumber)
-                    .arg(item.name));
-
-            continue;
-        }
-
-        const QString segmentKey =
-            item.id +
-            "|" +
-            QString::number(item.segment);
-
-        if (segmentKeys.contains(
-                segmentKey))
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行机组 %2 的申报段 %3 重复")
-                    .arg(row.lineNumber)
-                    .arg(item.id)
-                    .arg(item.segment));
-
-            continue;
-        }
-
-        segmentKeys.insert(segmentKey);
-
-        idToName[item.id] =
-            item.name;
-
-        idToType[item.id] =
-            item.type;
-
-        nameToId[item.name] =
-            item.id;
-
-        pricesByGenerator[item.id]
-            .insert(
-                item.segment,
-                item.price);
-
-        tempData.push_back(item);
-    }
-
-    if (!errors.isEmpty())
-    {
-        return false;
-    }
-
-    for (auto it =
-         pricesByGenerator.cbegin();
-         it != pricesByGenerator.cend();
-         ++it)
-    {
-        const QString generatorId =
-            it.key();
-
-        const QMap<int, double> &segments =
-            it.value();
-
-        const int segmentCount =
-            segments.size();
-
-        if (segmentCount > 5)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "机组 %1 的申报段数超过 5 段")
-                    .arg(generatorId));
-
-            continue;
-        }
-
-        for (int segment = 1;
-             segment <= segmentCount;
-             ++segment)
-        {
-            if (!segments.contains(segment))
+            if (unitIds.contains(
+                    unitId))
             {
-                addError(
-                    errors,
-                    prefix,
+                errors.append(
                     QString(
-                        "机组 %1 的申报段必须从 1 连续编号")
-                        .arg(generatorId));
+                        "第 %1 行机组编号 %2 重复")
+                        .arg(row.lineNumber)
+                        .arg(unitId));
 
-                break;
+                rowValid = false;
+            }
+            else
+            {
+                unitIds.insert(
+                    unitId);
             }
         }
 
-        for (int segment = 2;
-             segment <= segmentCount;
+        QVector<GeneratorBid>
+            rowBids;
+
+        bool hasSegment = false;
+        bool emptySegmentFound = false;
+        bool hasPreviousPrice = false;
+
+        double previousPrice =
+            0.0;
+
+        for (int segment = 1;
+             segment <= maxSegments;
              ++segment)
         {
-            if (!segments.contains(segment - 1) ||
-                !segments.contains(segment))
+            const int quantityIndex =
+                baseColumns +
+                (segment - 1) * 2;
+
+            const int priceIndex =
+                quantityIndex + 1;
+
+            const QString quantityText =
+                c[quantityIndex]
+                    .trimmed();
+
+            const QString priceText =
+                c[priceIndex]
+                    .trimmed();
+
+            if (quantityText.isEmpty() &&
+                priceText.isEmpty())
             {
+                emptySegmentFound =
+                    true;
+
                 continue;
             }
 
-            if (segments.value(segment) <
-                segments.value(segment - 1))
-            {
-                addError(
-                    errors,
-                    prefix,
-                    QString(
-                        "机组 %1 的申报电价必须随申报段单调不减")
-                        .arg(generatorId));
+            hasSegment = true;
 
-                break;
+            if (quantityText.isEmpty() ||
+                priceText.isEmpty())
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行第 %2 段报价不完整")
+                        .arg(row.lineNumber)
+                        .arg(segment));
+
+                rowValid = false;
+                emptySegmentFound =
+                    true;
+
+                continue;
+            }
+
+            if (emptySegmentFound)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行机组 %2 的报价段不连续")
+                        .arg(row.lineNumber)
+                        .arg(unitId));
+
+                rowValid = false;
+            }
+
+            double quantity = 0.0;
+            double price = 0.0;
+
+            const QString quantityName =
+                QString("P%1")
+                    .arg(segment);
+
+            const QString priceName =
+                QString("C%1")
+                    .arg(segment);
+
+            const bool quantityOk =
+                parseNonNegativeDouble(
+                    quantityText,
+                    quantity,
+                    row.lineNumber,
+                    quantityName,
+                    errors);
+
+            const bool priceOk =
+                parseDouble(
+                    priceText,
+                    price,
+                    row.lineNumber,
+                    priceName,
+                    errors);
+
+            if (!quantityOk ||
+                !priceOk)
+            {
+                rowValid = false;
+                continue;
+            }
+
+            if (quantity <= 0.0)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行 P%2 必须大于 0")
+                        .arg(row.lineNumber)
+                        .arg(segment));
+
+                rowValid = false;
+            }
+
+            if (!checkPriceRange(
+                    price,
+                    row.lineNumber,
+                    priceName,
+                    errors))
+            {
+                rowValid = false;
+            }
+
+            if (!checkPricePrecision(
+                    priceText,
+                    row.lineNumber,
+                    priceName,
+                    errors))
+            {
+                rowValid = false;
+            }
+
+            if (hasPreviousPrice &&
+                price < previousPrice)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行机组 %2 的报价必须单调非递减")
+                        .arg(row.lineNumber)
+                        .arg(unitId));
+
+                rowValid = false;
+            }
+
+            GeneratorBid item;
+
+            item.id =
+                unitId;
+
+            item.name =
+                plantName;
+
+            item.type =
+                unitType;
+
+            item.segment =
+                segment;
+
+            item.price =
+                price;
+
+            item.quantity =
+                quantity;
+
+            rowBids.push_back(
+                item);
+
+            previousPrice =
+                price;
+
+            hasPreviousPrice =
+                true;
+        }
+
+        if (!hasSegment)
+        {
+            errors.append(
+                QString(
+                    "第 %1 行机组 %2 没有填写报价")
+                    .arg(row.lineNumber)
+                    .arg(unitId));
+
+            rowValid = false;
+        }
+
+        if (rowValid)
+        {
+            for (const GeneratorBid &bid :
+                 rowBids)
+            {
+                tempData.push_back(
+                    bid);
             }
         }
     }
@@ -847,7 +713,7 @@ bool DataReader::readGeneratorBids(
 }
 
 
-// 用户侧申报读取
+// 用户侧
 bool DataReader::readConsumerBids(
     const QString &filePath,
     QVector<ConsumerBid> &data,
@@ -856,24 +722,14 @@ bool DataReader::readConsumerBids(
     data.clear();
     errors.clear();
 
-    const QString prefix =
-        "购电";
-
-    const QStringList expectedHeader =
-        {
-            "用户ID",
-            "用户名称",
-            "申报段",
-            "申报电价(元/MWh)",
-            "申报电量(MWh)"
-        };
+    constexpr int maxSegments = 10;
+    constexpr int baseColumns = 2;
 
     QVector<CsvRow> rows;
 
     if (!readCsvRows(
             filePath,
-            expectedHeader,
-            prefix,
+            consumerHeader(),
             rows,
             errors))
     {
@@ -882,208 +738,247 @@ bool DataReader::readConsumerBids(
 
     QVector<ConsumerBid> tempData;
 
-    QSet<QString> segmentKeys;
+    QSet<QString> consumerIds;
 
-    QHash<QString, QString> idToName;
-
-    QMap<QString, QMap<int, double>>
-        pricesByConsumer;
-
-    for (const CsvRow &row : rows)
+    for (const CsvRow &row :
+         rows)
     {
         const QStringList &c =
             row.columns;
 
-        ConsumerBid item;
+        const QString consumerName =
+            c[0];
 
-        item.id = c[0];
-        item.name = c[1];
+        const QString consumerId =
+            c[1];
 
         bool rowValid = true;
 
         if (!checkNotEmpty(
-                item.id,
+                consumerName,
                 row.lineNumber,
-                "用户 ID",
-                prefix,
+                "用户名称",
                 errors))
         {
             rowValid = false;
         }
 
         if (!checkNotEmpty(
-                item.name,
+                consumerId,
                 row.lineNumber,
-                "用户名称",
-                prefix,
+                "用户编号",
                 errors))
         {
             rowValid = false;
         }
 
-        if (!parsePositiveInt(
-                c[2],
-                item.segment,
-                row.lineNumber,
-                "申报段",
-                prefix,
-                errors))
+        if (!consumerId.isEmpty())
         {
-            rowValid = false;
-        }
-        else if (item.segment > 5)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行申报段不能超过 5")
-                    .arg(row.lineNumber));
-
-            rowValid = false;
-        }
-
-        if (!parsePrice(
-                c[3],
-                item.price,
-                row.lineNumber,
-                prefix,
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!parsePositiveQuantity(
-                c[4],
-                item.quantity,
-                row.lineNumber,
-                prefix,
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!rowValid)
-        {
-            continue;
-        }
-
-        if (idToName.contains(item.id) &&
-            idToName.value(item.id) != item.name)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行用户 %2 的名称与前面不一致")
-                    .arg(row.lineNumber)
-                    .arg(item.id));
-
-            continue;
-        }
-
-        const QString segmentKey =
-            item.id +
-            "|" +
-            QString::number(item.segment);
-
-        if (segmentKeys.contains(
-                segmentKey))
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "第 %1 行用户 %2 的申报段 %3 重复")
-                    .arg(row.lineNumber)
-                    .arg(item.id)
-                    .arg(item.segment));
-
-            continue;
-        }
-
-        segmentKeys.insert(segmentKey);
-
-        idToName[item.id] =
-            item.name;
-
-        pricesByConsumer[item.id]
-            .insert(
-                item.segment,
-                item.price);
-
-        tempData.push_back(item);
-    }
-
-    if (!errors.isEmpty())
-    {
-        return false;
-    }
-
-    for (auto it =
-         pricesByConsumer.cbegin();
-         it != pricesByConsumer.cend();
-         ++it)
-    {
-        const QString consumerId =
-            it.key();
-
-        const QMap<int, double> &segments =
-            it.value();
-
-        const int segmentCount =
-            segments.size();
-
-        if (segmentCount > 5)
-        {
-            addError(
-                errors,
-                prefix,
-                QString(
-                    "用户 %1 的申报段数超过 5 段")
-                    .arg(consumerId));
-
-            continue;
-        }
-
-        for (int segment = 1;
-             segment <= segmentCount;
-             ++segment)
-        {
-            if (!segments.contains(segment))
+            if (consumerIds.contains(
+                    consumerId))
             {
-                addError(
-                    errors,
-                    prefix,
+                errors.append(
                     QString(
-                        "用户 %1 的申报段必须从 1 连续编号")
+                        "第 %1 行用户编号 %2 重复")
+                        .arg(row.lineNumber)
                         .arg(consumerId));
 
-                break;
+                rowValid = false;
+            }
+            else
+            {
+                consumerIds.insert(
+                    consumerId);
             }
         }
 
-        for (int segment = 2;
-             segment <= segmentCount;
+        QVector<ConsumerBid>
+            rowBids;
+
+        bool hasSegment = false;
+        bool emptySegmentFound = false;
+        bool hasPreviousPrice = false;
+
+        double previousPrice =
+            0.0;
+
+        for (int segment = 1;
+             segment <= maxSegments;
              ++segment)
         {
-            if (!segments.contains(segment - 1) ||
-                !segments.contains(segment))
+            const int quantityIndex =
+                baseColumns +
+                (segment - 1) * 2;
+
+            const int priceIndex =
+                quantityIndex + 1;
+
+            const QString quantityText =
+                c[quantityIndex]
+                    .trimmed();
+
+            const QString priceText =
+                c[priceIndex]
+                    .trimmed();
+
+            if (quantityText.isEmpty() &&
+                priceText.isEmpty())
             {
+                emptySegmentFound =
+                    true;
+
                 continue;
             }
 
-            if (segments.value(segment) >
-                segments.value(segment - 1))
+            hasSegment = true;
+
+            if (quantityText.isEmpty() ||
+                priceText.isEmpty())
             {
-                addError(
-                    errors,
-                    prefix,
+                errors.append(
                     QString(
-                        "用户 %1 的申报电价必须随申报段单调不增")
+                        "第 %1 行第 %2 段报价不完整")
+                        .arg(row.lineNumber)
+                        .arg(segment));
+
+                rowValid = false;
+                emptySegmentFound =
+                    true;
+
+                continue;
+            }
+
+            if (emptySegmentFound)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行用户 %2 的报价段不连续")
+                        .arg(row.lineNumber)
                         .arg(consumerId));
 
-                break;
+                rowValid = false;
+            }
+
+            double quantity = 0.0;
+            double price = 0.0;
+
+            const QString quantityName =
+                QString("P%1")
+                    .arg(segment);
+
+            const QString priceName =
+                QString("C%1")
+                    .arg(segment);
+
+            const bool quantityOk =
+                parseNonNegativeDouble(
+                    quantityText,
+                    quantity,
+                    row.lineNumber,
+                    quantityName,
+                    errors);
+
+            const bool priceOk =
+                parseDouble(
+                    priceText,
+                    price,
+                    row.lineNumber,
+                    priceName,
+                    errors);
+
+            if (!quantityOk ||
+                !priceOk)
+            {
+                rowValid = false;
+                continue;
+            }
+
+            if (quantity <= 0.0)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行 P%2 必须大于 0")
+                        .arg(row.lineNumber)
+                        .arg(segment));
+
+                rowValid = false;
+            }
+
+            if (!checkPriceRange(
+                    price,
+                    row.lineNumber,
+                    priceName,
+                    errors))
+            {
+                rowValid = false;
+            }
+
+            if (!checkPricePrecision(
+                    priceText,
+                    row.lineNumber,
+                    priceName,
+                    errors))
+            {
+                rowValid = false;
+            }
+
+            if (hasPreviousPrice &&
+                price > previousPrice)
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行用户 %2 的报价必须单调非递增")
+                        .arg(row.lineNumber)
+                        .arg(consumerId));
+
+                rowValid = false;
+            }
+
+            ConsumerBid item;
+
+            item.id =
+                consumerId;
+
+            item.name =
+                consumerName;
+
+            item.segment =
+                segment;
+
+            item.price =
+                price;
+
+            item.quantity =
+                quantity;
+
+            rowBids.push_back(
+                item);
+
+            previousPrice =
+                price;
+
+            hasPreviousPrice =
+                true;
+        }
+
+        if (!hasSegment)
+        {
+            errors.append(
+                QString(
+                    "第 %1 行用户 %2 没有填写报价")
+                    .arg(row.lineNumber)
+                    .arg(consumerId));
+
+            rowValid = false;
+        }
+
+        if (rowValid)
+        {
+            for (const ConsumerBid &bid :
+                 rowBids)
+            {
+                tempData.push_back(
+                    bid);
             }
         }
     }
@@ -1100,7 +995,7 @@ bool DataReader::readConsumerBids(
 }
 
 
-// 负荷曲线读取
+// 负荷曲线
 bool DataReader::readLoadCurve(
     const QString &filePath,
     QVector<LoadPoint> &data,
@@ -1121,7 +1016,6 @@ bool DataReader::readLoadCurve(
     if (!readCsvRows(
             filePath,
             expectedHeader,
-            QString(),
             rows,
             errors))
     {
@@ -1129,16 +1023,19 @@ bool DataReader::readLoadCurve(
     }
 
     QVector<LoadPoint> tempData;
+
     QSet<int> periods;
 
-    for (const CsvRow &row : rows)
+    for (const CsvRow &row :
+         rows)
     {
         const QStringList &c =
             row.columns;
 
         LoadPoint item;
 
-        item.time = c[1];
+        item.time =
+            c[1];
 
         bool rowValid = true;
 
@@ -1147,18 +1044,8 @@ bool DataReader::readLoadCurve(
                 item.period,
                 row.lineNumber,
                 "时段",
-                QString(),
                 errors))
         {
-            rowValid = false;
-        }
-        else if (item.period > 96)
-        {
-            errors.append(
-                QString(
-                    "第 %1 行时段必须在 1~96 范围内")
-                    .arg(row.lineNumber));
-
             rowValid = false;
         }
 
@@ -1166,13 +1053,12 @@ bool DataReader::readLoadCurve(
                 item.time,
                 row.lineNumber,
                 "时刻",
-                QString(),
                 errors))
         {
             rowValid = false;
         }
 
-        if (!parsePositivePower(
+        if (!parseNonNegativeDouble(
                 c[2],
                 item.load,
                 row.lineNumber,
@@ -1182,60 +1068,60 @@ bool DataReader::readLoadCurve(
             rowValid = false;
         }
 
-        if (!rowValid)
-        {
-            continue;
-        }
-
-        if (item.time !=
-            expectedTime(item.period))
+        if (rowValid &&
+            (item.period < 1 ||
+             item.period > 96))
         {
             errors.append(
                 QString(
-                    "第 %1 行时刻应为 %2，实际为 %3")
-                    .arg(row.lineNumber)
-                    .arg(expectedTime(item.period))
-                    .arg(item.time));
-
-            continue;
-        }
-
-        if (periods.contains(
-                item.period))
-        {
-            errors.append(
-                QString(
-                    "第 %1 行时段 %2 重复")
+                    "第 %1 行时段 %2 超出 1～96 范围")
                     .arg(row.lineNumber)
                     .arg(item.period));
 
-            continue;
+            rowValid = false;
         }
 
-        periods.insert(
-            item.period);
+        if (rowValid)
+        {
+            if (periods.contains(
+                    item.period))
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行时段 %2 重复")
+                        .arg(row.lineNumber)
+                        .arg(item.period));
 
-        tempData.push_back(item);
+                rowValid = false;
+            }
+            else
+            {
+                periods.insert(
+                    item.period);
+            }
+        }
+
+        if (rowValid)
+        {
+            tempData.push_back(
+                item);
+        }
     }
 
-    if (!errors.isEmpty())
-    {
-        return false;
-    }
-
-    if (tempData.size() != 96)
+    if (periods.size() != 96)
     {
         errors.append(
             QString(
-                "负荷曲线必须包含 96 个时段，实际为 %1 个")
-                .arg(tempData.size()));
+                "负荷曲线应包含 96 个时段，实际为 %1 个")
+                .arg(periods.size()));
     }
 
     for (int period = 1;
          period <= 96;
          ++period)
     {
-        if (!periods.contains(period))
+        if (!periods.contains(
+                period))
         {
             errors.append(
                 QString(
@@ -1256,7 +1142,7 @@ bool DataReader::readLoadCurve(
 }
 
 
-// 新能源出力读取
+// 新能源基准出力
 bool DataReader::readRenewableOutput(
     const QString &filePath,
     QVector<RenewableOutput> &data,
@@ -1278,38 +1164,33 @@ bool DataReader::readRenewableOutput(
     if (!readCsvRows(
             filePath,
             expectedHeader,
-            QString(),
             rows,
             errors))
     {
         return false;
     }
 
-    const QSet<QString> allowedTypes =
-        {
-            "风电",
-            "光伏"
-        };
-
-    QVector<RenewableOutput> tempData;
+    QVector<RenewableOutput>
+        tempData;
 
     QSet<QString> keys;
 
-    QHash<QString, QString>
-        typeByGenerator;
-
     QHash<QString, QSet<int>>
-        periodsByGenerator;
+        generatorPeriods;
 
-    for (const CsvRow &row : rows)
+    for (const CsvRow &row :
+         rows)
     {
         const QStringList &c =
             row.columns;
 
         RenewableOutput item;
 
-        item.generatorId = c[0];
-        item.generatorType = c[1];
+        item.generatorId =
+            c[0];
+
+        item.generatorType =
+            c[1];
 
         bool rowValid = true;
 
@@ -1317,7 +1198,6 @@ bool DataReader::readRenewableOutput(
                 item.generatorId,
                 row.lineNumber,
                 "新能源机组 ID",
-                QString(),
                 errors))
         {
             rowValid = false;
@@ -1327,18 +1207,17 @@ bool DataReader::readRenewableOutput(
                 item.generatorType,
                 row.lineNumber,
                 "新能源类型",
-                QString(),
                 errors))
         {
             rowValid = false;
         }
 
-        if (!allowedTypes.contains(
-                item.generatorType))
+        if (item.generatorType != "风电" &&
+            item.generatorType != "光伏")
         {
             errors.append(
                 QString(
-                    "第 %1 行新能源类型只能为风电或光伏")
+                    "第 %1 行新能源类型必须为风电或光伏")
                     .arg(row.lineNumber));
 
             rowValid = false;
@@ -1349,22 +1228,12 @@ bool DataReader::readRenewableOutput(
                 item.period,
                 row.lineNumber,
                 "时段",
-                QString(),
                 errors))
         {
             rowValid = false;
         }
-        else if (item.period > 96)
-        {
-            errors.append(
-                QString(
-                    "第 %1 行时段必须在 1~96 范围内")
-                    .arg(row.lineNumber));
 
-            rowValid = false;
-        }
-
-        if (!parseNonNegativePower(
+        if (!parseNonNegativeDouble(
                 c[3],
                 item.output,
                 row.lineNumber,
@@ -1374,65 +1243,61 @@ bool DataReader::readRenewableOutput(
             rowValid = false;
         }
 
-        if (!rowValid)
-        {
-            continue;
-        }
-
-        if (typeByGenerator.contains(
-                item.generatorId) &&
-            typeByGenerator.value(
-                item.generatorId) !=
-                item.generatorType)
+        if (rowValid &&
+            (item.period < 1 ||
+             item.period > 96))
         {
             errors.append(
                 QString(
-                    "第 %1 行机组 %2 的新能源类型与前面不一致")
+                    "第 %1 行时段 %2 超出 1～96 范围")
                     .arg(row.lineNumber)
-                    .arg(item.generatorId));
-
-            continue;
-        }
-
-        const QString key =
-            item.generatorId +
-            "|" +
-            QString::number(
-                item.period);
-
-        if (keys.contains(key))
-        {
-            errors.append(
-                QString(
-                    "第 %1 行机组 %2 在时段 %3 的新能源出力重复")
-                    .arg(row.lineNumber)
-                    .arg(item.generatorId)
                     .arg(item.period));
 
-            continue;
+            rowValid = false;
         }
 
-        keys.insert(key);
+        if (rowValid)
+        {
+            const QString key =
+                item.generatorId +
+                "|" +
+                QString::number(
+                    item.period);
 
-        typeByGenerator[
-            item.generatorId] =
-            item.generatorType;
+            if (keys.contains(
+                    key))
+            {
+                errors.append(
+                    QString(
+                        "第 %1 行机组 %2 在时段 %3 的新能源出力重复")
+                        .arg(row.lineNumber)
+                        .arg(item.generatorId)
+                        .arg(item.period));
 
-        periodsByGenerator[
-            item.generatorId]
-            .insert(item.period);
+                rowValid = false;
+            }
+            else
+            {
+                keys.insert(
+                    key);
+            }
+        }
 
-        tempData.push_back(item);
-    }
+        if (rowValid)
+        {
+            generatorPeriods[
+                item.generatorId]
+                .insert(
+                    item.period);
 
-    if (!errors.isEmpty())
-    {
-        return false;
+            tempData.push_back(
+                item);
+        }
     }
 
     for (auto it =
-         periodsByGenerator.cbegin();
-         it != periodsByGenerator.cend();
+         generatorPeriods.constBegin();
+         it != generatorPeriods.constEnd();
          ++it)
     {
         const QString generatorId =
@@ -1445,26 +1310,23 @@ bool DataReader::readRenewableOutput(
         {
             errors.append(
                 QString(
-                    "新能源机组 %1 必须包含 96 个时段，实际为 %2 个")
+                    "新能源机组 %1 应包含 96 个时段，实际为 %2 个")
                     .arg(generatorId)
                     .arg(periods.size()));
-
-            continue;
         }
 
         for (int period = 1;
              period <= 96;
              ++period)
         {
-            if (!periods.contains(period))
+            if (!periods.contains(
+                    period))
             {
                 errors.append(
                     QString(
                         "新能源机组 %1 缺少时段 %2")
                         .arg(generatorId)
                         .arg(period));
-
-                break;
             }
         }
     }
@@ -1481,7 +1343,7 @@ bool DataReader::readRenewableOutput(
 }
 
 
-// 统一读取接口
+// 统一读取
 bool DataReader::readAll(
     const DataFileSet &files,
     MarketData &data,
@@ -1491,6 +1353,7 @@ bool DataReader::readAll(
     errors.clear();
 
     MarketData tempData;
+
     QStringList fileErrors;
 
     bool allOk = true;
@@ -1565,7 +1428,7 @@ bool DataReader::readAll(
 }
 
 
-// 跨文件一致性校验
+// 跨文件一致性
 bool DataReader::validateRelations(
     const MarketData &data,
     QStringList &errors)
@@ -1575,111 +1438,92 @@ bool DataReader::validateRelations(
     QHash<QString, QString>
         generatorTypes;
 
-    for (const GeneratorBid &item :
+    QSet<QString>
+        renewableGeneratorIds;
+
+    for (const GeneratorBid &bid :
          data.generatorBids)
     {
-        generatorTypes[item.id] =
-            item.type;
+        if (!generatorTypes.contains(
+                bid.id))
+        {
+            generatorTypes.insert(
+                bid.id,
+                bid.type);
+        }
+
+        if (bid.type == "风电" ||
+            bid.type == "光伏")
+        {
+            renewableGeneratorIds.insert(
+                bid.id);
+        }
     }
 
-    QHash<QString, QString>
-        renewableTypes;
+    QSet<QString>
+        renewableOutputIds;
+
+    QSet<QString>
+        missingGeneratorIds;
+
+    QSet<QString>
+        typeMismatchIds;
 
     for (const RenewableOutput &item :
          data.renewableOutputs)
     {
-        renewableTypes[
-            item.generatorId] =
-            item.generatorType;
-    }
-
-    for (auto it =
-         renewableTypes.cbegin();
-         it != renewableTypes.cend();
-         ++it)
-    {
-        const QString generatorId =
-            it.key();
-
-        const QString renewableType =
-            it.value();
+        renewableOutputIds.insert(
+            item.generatorId);
 
         if (!generatorTypes.contains(
-                generatorId))
+                item.generatorId))
         {
-            addError(
-                errors,
-                "跨文件",
-                QString(
-                    "新能源机组 %1 未在 generator_bids.csv 中定义")
-                    .arg(generatorId));
+            if (!missingGeneratorIds.contains(
+                    item.generatorId))
+            {
+                errors.append(
+                    QString(
+                        "新能源机组 %1 在发电侧申报中不存在")
+                        .arg(item.generatorId));
+
+                missingGeneratorIds.insert(
+                    item.generatorId);
+            }
 
             continue;
         }
 
-        if (generatorTypes.value(
-                generatorId) !=
-            renewableType)
+        const QString generatorType =
+            generatorTypes.value(
+                item.generatorId);
+
+        if (generatorType !=
+            item.generatorType)
         {
-            addError(
-                errors,
-                "跨文件",
-                QString(
-                    "新能源机组 %1 的类型与 generator_bids.csv 不一致")
-                    .arg(generatorId));
+            if (!typeMismatchIds.contains(
+                    item.generatorId))
+            {
+                errors.append(
+                    QString(
+                        "新能源机组 %1 的机组类型不一致")
+                        .arg(item.generatorId));
+
+                typeMismatchIds.insert(
+                    item.generatorId);
+            }
         }
     }
 
-    if (!data.consumerBids.isEmpty() &&
-        !data.loadCurve.isEmpty())
+    for (const QString &generatorId :
+         renewableGeneratorIds)
     {
-        double consumerEnergy =
-            0.0;
-
-        for (const ConsumerBid &item :
-             data.consumerBids)
+        if (!renewableOutputIds.contains(
+                generatorId))
         {
-            consumerEnergy +=
-                item.quantity;
-        }
-
-        double loadEnergy =
-            0.0;
-
-        for (const LoadPoint &item :
-             data.loadCurve)
-        {
-            loadEnergy +=
-                item.load * 0.25;
-        }
-
-        const double difference =
-            consumerEnergy -
-            loadEnergy;
-
-        if (std::abs(difference) >
-            0.05)
-        {
-            addError(
-                errors,
-                "跨文件",
+            errors.append(
                 QString(
-                    "购电申报总电量为 %1 MWh，当日负荷总电量为 %2 MWh，差额为 %3 MWh")
-                    .arg(
-                        consumerEnergy,
-                        0,
-                        'f',
-                        1)
-                    .arg(
-                        loadEnergy,
-                        0,
-                        'f',
-                        1)
-                    .arg(
-                        difference,
-                        0,
-                        'f',
-                        1));
+                    "新能源机组 %1 缺少新能源出力数据")
+                    .arg(generatorId));
         }
     }
 

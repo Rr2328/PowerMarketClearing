@@ -7,12 +7,20 @@
 #include <QStringList>
 #include <QVector>
 
+// 时段颗粒度
+enum class TimeGranularity
+{
+    Hourly24,
+    QuarterHourly96
+};
+
 // 单时段场景数据
 struct PeriodScenario
 {
     int period = 0;
     QString time;
 
+    double intervalHours = 0.0;
     double loadMW = 0.0;
 
     QVector<RenewableOutput> renewableBase;
@@ -34,7 +42,7 @@ public:
 
     static bool buildPeriodScenarios(
         const MarketData &data,
-        int periodCount,
+        TimeGranularity granularity,
         QVector<PeriodScenario> &scenarios,
         QStringList &errors);
 };

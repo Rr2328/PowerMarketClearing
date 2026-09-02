@@ -5,45 +5,32 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QHash>
-#include <QSet>
+#include <QStringConverter>
+#include <QStringList>
 #include <QTemporaryDir>
 #include <QTextStream>
 
 namespace
 {
 
-int failedTests = 0;
-
-// 测试结果输出
-void check(
-    bool condition,
-    const QString &testName)
+QString findProjectRoot()
 {
-    if (condition)
-    {
-        qInfo().noquote()
-        << "[PASS]" << testName;
-    }
-    else
-    {
-        qCritical().noquote()
-        << "[FAIL]" << testName;
-
-        ++failedTests;
-    }
-}
-
-// 查找项目根目录
-QString searchRepoRoot(
-    const QString &startPath)
-{
-    QDir dir(startPath);
+    QDir dir(
+        QCoreApplication::applicationDirPath());
 
     while (true)
     {
-        if (dir.exists("ClearingSim") &&
-            dir.exists("data/samples"))
+        const bool hasCMake =
+            QFileInfo::exists(
+                dir.filePath("CMakeLists.txt"));
+
+        const bool hasDataReader =
+            QFileInfo::exists(
+                dir.filePath(
+                    "data/data_reader.cpp"));
+
+        if (hasCMake &&
+            hasDataReader)
         {
             return dir.absolutePath();
         }
@@ -57,38 +44,65 @@ QString searchRepoRoot(
     return QString();
 }
 
-// 自动定位项目根目录
-QString findRepoRoot()
+
+QString findRepositoryRoot(
+    const QString &projectRoot)
 {
-    QString root;
-
-    root =
-        searchRepoRoot(
-            QCoreApplication::
-            applicationDirPath());
-
-    if (!root.isEmpty())
+    if (projectRoot.isEmpty())
     {
-        return root;
+        return QString();
     }
 
-    root =
-        searchRepoRoot(
-            QDir::currentPath());
+    QDir dir(projectRoot);
 
-    if (!root.isEmpty())
+    if (!dir.cdUp())
     {
-        return root;
+        return QString();
     }
 
-    const QFileInfo sourceFile(
-        QString::fromUtf8(__FILE__));
-
-    return searchRepoRoot(
-        sourceFile.absolutePath());
+    return dir.absolutePath();
 }
 
-// 创建临时 CSV 文件
+
+QString scenarioDataDirectory(
+    const QString &repositoryRoot)
+{
+    return QDir(repositoryRoot)
+    .filePath(
+        "data/samples/scenario");
+}
+
+
+int countScenarioFiles(
+    const QString &directory)
+{
+    const QStringList fileNames =
+        {
+            "generator_bids.csv",
+            "consumer_bids.csv",
+            "load_curve.csv",
+            "renewable_output.csv"
+        };
+
+    int count = 0;
+
+    for (const QString &fileName :
+         fileNames)
+    {
+        const QString filePath =
+            QDir(directory)
+                .filePath(fileName);
+
+        if (QFileInfo::exists(filePath))
+        {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+
 bool writeTextFile(
     const QString &filePath,
     const QString &content)
@@ -104,87 +118,329 @@ bool writeTextFile(
 
     QTextStream out(&file);
 
+    out.setEncoding(
+        QStringConverter::Utf8);
+
     out << content;
 
     return true;
 }
 
-// 输出错误信息
+
+QStringList generatorHeader()
+{
+    QStringList header;
+
+    header
+        << "电厂名称"
+        << "机组编号"
+        << "机组类型";
+
+    for (int segment = 1;
+         segment <= 10;
+         ++segment)
+    {
+        header
+            << QString(
+                   "出力P%1(MW)")
+                   .arg(segment)
+            << QString(
+                   "报价C%1(元/MWh)")
+                   .arg(segment);
+    }
+
+    return header;
+}
+
+
+QStringList consumerHeader()
+{
+    QStringList header;
+
+    header
+        << "用户名称"
+        << "用户编号";
+
+    for (int segment = 1;
+         segment <= 10;
+         ++segment)
+    {
+        header
+            << QString(
+                   "购电量P%1(MWh)")
+                   .arg(segment)
+            << QString(
+                   "报价C%1(元/MWh)")
+                   .arg(segment);
+    }
+
+    return header;
+}
+
+
+QString makeGeneratorRow(
+    const QString &plantName,
+    const QString &unitId,
+    const QString &unitType,
+    const QVector<QPair<QString, QString>>
+        &segments)
+{
+    QStringList columns;
+
+    columns
+        << plantName
+        << unitId
+        << unitType;
+
+    for (int i = 0;
+         i < 10;
+         ++i)
+    {
+        if (i < segments.size())
+        {
+            columns
+                << segments[i].first
+                << segments[i].second;
+        }
+        else
+        {
+            columns
+                << ""
+                << "";
+        }
+    }
+
+    return columns.join(',');
+}
+
+
+QString makeConsumerRow(
+    const QString &consumerName,
+    const QString &consumerId,
+    const QVector<QPair<QString, QString>>
+        &segments)
+{
+    QStringList columns;
+
+    columns
+        << consumerName
+        << consumerId;
+
+    for (int i = 0;
+         i < 10;
+         ++i)
+    {
+        if (i < segments.size())
+        {
+            columns
+                << segments[i].first
+                << segments[i].second;
+        }
+        else
+        {
+            columns
+                << ""
+                << "";
+        }
+    }
+
+    return columns.join(',');
+}
+
+
+QString makeCsv(
+    const QStringList &header,
+    const QStringList &rows)
+{
+    QString content;
+
+    content +=
+        header.join(',');
+
+    content += '\n';
+
+    for (const QString &row :
+         rows)
+    {
+        content += row;
+        content += '\n';
+    }
+
+    return content;
+}
+
+
+QString makeLoadCsv(
+    int periodCount)
+{
+    QString content =
+        "时段,时刻,负荷(MW)\n";
+
+    for (int period = 1;
+         period <= periodCount;
+         ++period)
+    {
+        const int totalMinutes =
+            (period - 1) * 15;
+
+        const int hour =
+            totalMinutes / 60;
+
+        const int minute =
+            totalMinutes % 60;
+
+        const QString time =
+            QString("%1:%2")
+                .arg(
+                    hour,
+                    2,
+                    10,
+                    QChar('0'))
+                .arg(
+                    minute,
+                    2,
+                    10,
+                    QChar('0'));
+
+        content +=
+            QString("%1,%2,%3\n")
+                .arg(period)
+                .arg(time)
+                .arg(
+                    500.0 +
+                        period,
+                    0,
+                    'f',
+                    1);
+    }
+
+    return content;
+}
+
+
+QString makeRenewableCsv(
+    const QString &generatorId,
+    const QString &generatorType,
+    int periodCount)
+{
+    QString content =
+        "机组ID,机组类型,时段,出力(MW)\n";
+
+    for (int period = 1;
+         period <= periodCount;
+         ++period)
+    {
+        content +=
+            QString("%1,%2,%3,%4\n")
+                .arg(generatorId)
+                .arg(generatorType)
+                .arg(period)
+                .arg(
+                    30.0 +
+                        period * 0.1,
+                    0,
+                    'f',
+                    1);
+    }
+
+    return content;
+}
+
+
+bool containsError(
+    const QStringList &errors,
+    const QString &keyword)
+{
+    for (const QString &error :
+         errors)
+    {
+        if (error.contains(keyword))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
 void printErrors(
     const QStringList &errors)
 {
     for (const QString &error :
          errors)
     {
-        qInfo().noquote()
-        << "   " << error;
+        qInfo()
+        .noquote()
+            << "   "
+            << error;
     }
 }
 
-// 生成时刻
-QString timeText(int period)
+
+void check(
+    bool condition,
+    const QString &testName,
+    int &failedTests,
+    const QStringList &errors =
+    QStringList())
 {
-    const int totalMinutes =
-        period * 15;
-
-    if (totalMinutes == 1440)
+    if (condition)
     {
-        return "24:00";
+        qInfo()
+        .noquote()
+            << "[PASS]"
+            << testName;
     }
+    else
+    {
+        ++failedTests;
 
-    return QString("%1:%2")
-        .arg(
-            totalMinutes / 60,
-            2,
-            10,
-            QChar('0'))
-        .arg(
-            totalMinutes % 60,
-            2,
-            10,
-            QChar('0'));
+        qInfo()
+                .noquote()
+            << "[FAIL]"
+            << testName;
+
+        printErrors(errors);
+    }
 }
 
-// 生成负荷测试文件
-QString buildLoadCsv(int count)
+
+GeneratorBid makeGeneratorBid(
+    const QString &id,
+    const QString &name,
+    const QString &type)
 {
-    QString content =
-        "时段,时刻,负荷(MW)\n";
+    GeneratorBid bid;
 
-    for (int period = 1;
-         period <= count;
-         ++period)
-    {
-        content +=
-            QString("%1,%2,700.0\n")
-                .arg(period)
-                .arg(timeText(period));
-    }
+    bid.id = id;
+    bid.name = name;
+    bid.type = type;
 
-    return content;
+    bid.segment = 1;
+    bid.price = 0.0;
+    bid.quantity = 50.0;
+
+    return bid;
 }
 
-// 生成新能源测试文件
-QString buildRenewableCsv(
-    int count)
+
+RenewableOutput makeRenewableOutput(
+    const QString &id,
+    const QString &type)
 {
-    QString content =
-        "机组ID,机组类型,时段,出力(MW)\n";
+    RenewableOutput output;
 
-    for (int period = 1;
-         period <= count;
-         ++period)
-    {
-        content +=
-            QString(
-                "W1,风电,%1,40.0\n")
-                .arg(period);
-    }
+    output.generatorId = id;
+    output.generatorType = type;
 
-    return content;
+    output.period = 1;
+    output.output = 30.0;
+
+    return output;
 }
 
-} // namespace
+}
 
 
 int main(
@@ -195,472 +451,761 @@ int main(
         argc,
         argv);
 
-    qInfo().noquote()
-        << "========== DataReader V1.1 Test ==========";
+    int failedTests = 0;
 
-    const QString repoRoot =
-        findRepoRoot();
+    qInfo()
+            .noquote()
+        << "========== DataReader V1.2 Test ==========";
+
+
+    // 项目目录
+    const QString projectRoot =
+        findProjectRoot();
 
     check(
-        !repoRoot.isEmpty(),
-        "定位项目根目录");
+        !projectRoot.isEmpty(),
+        "定位 ClearingSim 项目根目录",
+        failedTests);
 
-    if (repoRoot.isEmpty())
+    if (projectRoot.isEmpty())
     {
+        qInfo()
+        .noquote()
+            << "========================================";
+
+        qInfo()
+                .noquote()
+            << failedTests
+            << "test(s) failed.";
+
         return 1;
     }
 
-    qInfo().noquote()
-        << "Repo root:"
-        << repoRoot;
+    qInfo()
+            .noquote()
+        << "Project root:"
+        << QDir::toNativeSeparators(
+               projectRoot);
 
 
-    // 真实样例数据
-    DataFileSet files;
+    // 仓库目录
+    const QString repositoryRoot =
+        findRepositoryRoot(
+            projectRoot);
 
-    files.generatorBidsFile =
-        repoRoot +
-        "/data/samples/benchmark/generator_bids.csv";
+    check(
+        !repositoryRoot.isEmpty(),
+        "定位仓库根目录",
+        failedTests);
 
-    files.consumerBidsFile =
-        repoRoot +
-        "/data/samples/benchmark/consumer_bids.csv";
-
-    files.loadCurveFile =
-        repoRoot +
-        "/data/samples/curves/load_curve.csv";
-
-    files.renewableOutputFile =
-        repoRoot +
-        "/data/samples/curves/renewable_output.csv";
+    qInfo()
+            .noquote()
+        << "Repository root:"
+        << QDir::toNativeSeparators(
+               repositoryRoot);
 
 
-    MarketData marketData;
+    // 场景数据目录
+    const QString dataDirectory =
+        scenarioDataDirectory(
+            repositoryRoot);
+
+    const bool dataDirExists =
+        QDir(dataDirectory).exists();
+
+    check(
+        dataDirExists,
+        "定位 scenario 场景数据目录",
+        failedTests);
+
+    qInfo()
+            .noquote()
+        << "Scenario directory:"
+        << QDir::toNativeSeparators(
+               dataDirectory);
+
+
+    // 四类真实 CSV
+    const int scenarioFileCount =
+        countScenarioFiles(
+            dataDirectory);
+
+    check(
+        scenarioFileCount == 4,
+        QString(
+            "定位四类真实 CSV 数据（%1/4）")
+            .arg(scenarioFileCount),
+        failedTests);
+
+    if (scenarioFileCount != 4)
+    {
+        const QStringList fileNames =
+            {
+                "generator_bids.csv",
+                "consumer_bids.csv",
+                "load_curve.csv",
+                "renewable_output.csv"
+            };
+
+        for (const QString &fileName :
+             fileNames)
+        {
+            const QString filePath =
+                QDir(dataDirectory)
+                    .filePath(fileName);
+
+            if (QFileInfo::exists(filePath))
+            {
+                qInfo()
+                .noquote()
+                    << "   [FOUND]"
+                    << fileName;
+            }
+            else
+            {
+                qInfo()
+                .noquote()
+                    << "   [MISSING]"
+                    << fileName;
+            }
+        }
+    }
+
+
+    // 四类真实数据读取
+    DataFileSet realFiles;
+
+    realFiles.generatorBidsFile =
+        QDir(dataDirectory)
+            .filePath(
+                "generator_bids.csv");
+
+    realFiles.consumerBidsFile =
+        QDir(dataDirectory)
+            .filePath(
+                "consumer_bids.csv");
+
+    realFiles.loadCurveFile =
+        QDir(dataDirectory)
+            .filePath(
+                "load_curve.csv");
+
+    realFiles.renewableOutputFile =
+        QDir(dataDirectory)
+            .filePath(
+                "renewable_output.csv");
+
+    MarketData realData;
     QStringList errors;
 
-    bool ok =
+    const bool realReadOk =
         DataReader::readAll(
-            files,
-            marketData,
+            realFiles,
+            realData,
             errors);
 
     check(
-        ok,
-        "V1.1 单文件规则读取四类真实数据");
+        realReadOk,
+        "横向 P/C 格式读取四类真实数据",
+        failedTests,
+        errors);
 
-    if (!ok)
+
+    // 跨文件 ID 错误
     {
-        printErrors(errors);
-    }
-    else
-    {
-        qInfo().noquote()
-        << "Generator bids:"
-        << marketData.generatorBids.size();
+        MarketData inconsistentData;
 
-        qInfo().noquote()
-            << "Consumer bids:"
-            << marketData.consumerBids.size();
+        inconsistentData
+            .generatorBids
+            .push_back(
+                makeGeneratorBid(
+                    "W1",
+                    "测试风电场",
+                    "风电"));
 
-        qInfo().noquote()
-            << "Load points:"
-            << marketData.loadCurve.size();
+        inconsistentData
+            .renewableOutputs
+            .push_back(
+                makeRenewableOutput(
+                    "X1",
+                    "风电"));
 
-        qInfo().noquote()
-            << "Renewable outputs:"
-            << marketData.renewableOutputs.size();
-    }
+        errors.clear();
 
+        const bool result =
+            DataReader::validateRelations(
+                inconsistentData,
+                errors);
 
-    // 当前样例跨文件关系
-    errors.clear();
+        const bool detected =
+            !result &&
+            containsError(
+                errors,
+                "在发电侧申报中不存在");
 
-    ok =
-        DataReader::validateRelations(
-            marketData,
+        check(
+            detected,
+            "识别新能源机组 ID 跨文件不一致",
+            failedTests,
             errors);
-
-    check(
-        !ok,
-        "识别当前样例跨文件不一致");
-
-    if (!ok)
-    {
-        printErrors(errors);
     }
 
 
-    // 构造一份关系一致的数据
-    MarketData alignedData =
-        marketData;
-
-    QSet<QString> existingIds;
-
-    for (const GeneratorBid &item :
-         alignedData.generatorBids)
+    // 跨文件正确数据
     {
-        existingIds.insert(
-            item.id);
-    }
+        MarketData consistentData;
 
-    QHash<QString, QString>
-        renewableTypes;
+        consistentData
+            .generatorBids
+            .push_back(
+                makeGeneratorBid(
+                    "W1",
+                    "测试风电场",
+                    "风电"));
 
-    for (const RenewableOutput &item :
-         alignedData.renewableOutputs)
-    {
-        renewableTypes[
-            item.generatorId] =
-            item.generatorType;
-    }
+        consistentData
+            .generatorBids
+            .push_back(
+                makeGeneratorBid(
+                    "S1",
+                    "测试光伏电站",
+                    "光伏"));
 
-    for (auto it =
-         renewableTypes.cbegin();
-         it != renewableTypes.cend();
-         ++it)
-    {
-        if (existingIds.contains(
-                it.key()))
-        {
-            continue;
-        }
+        consistentData
+            .renewableOutputs
+            .push_back(
+                makeRenewableOutput(
+                    "W1",
+                    "风电"));
 
-        GeneratorBid item;
+        consistentData
+            .renewableOutputs
+            .push_back(
+                makeRenewableOutput(
+                    "S1",
+                    "光伏"));
 
-        item.id = it.key();
-        item.name = it.key();
-        item.type = it.value();
-        item.segment = 1;
-        item.price = 0.0;
-        item.quantity = 1.0;
+        errors.clear();
 
-        alignedData.generatorBids
-            .push_back(item);
-    }
+        const bool result =
+            DataReader::validateRelations(
+                consistentData,
+                errors);
 
-    double loadEnergy =
-        0.0;
-
-    for (const LoadPoint &item :
-         alignedData.loadCurve)
-    {
-        loadEnergy +=
-            item.load * 0.25;
-    }
-
-    if (!alignedData.consumerBids
-             .isEmpty())
-    {
-        double otherEnergy =
-            0.0;
-
-        for (int i = 1;
-             i <
-             alignedData.consumerBids.size();
-             ++i)
-        {
-            otherEnergy +=
-                alignedData
-                    .consumerBids[i]
-                    .quantity;
-        }
-
-        alignedData
-            .consumerBids[0]
-            .quantity =
-            loadEnergy -
-            otherEnergy;
-    }
-
-    errors.clear();
-
-    ok =
-        DataReader::validateRelations(
-            alignedData,
+        check(
+            result &&
+                errors.isEmpty(),
+            "跨文件一致数据通过校验",
+            failedTests,
             errors);
-
-    check(
-        ok,
-        "跨文件一致数据通过校验");
-
-    if (!ok)
-    {
-        printErrors(errors);
     }
 
 
+    // 临时测试目录
     QTemporaryDir tempDir;
 
     check(
         tempDir.isValid(),
-        "创建临时测试目录");
+        "创建临时测试目录",
+        failedTests);
 
-    if (tempDir.isValid())
+    if (!tempDir.isValid())
     {
-        QVector<GeneratorBid>
-            generators;
+        qInfo()
+        .noquote()
+            << "========================================";
 
-        QVector<ConsumerBid>
-            consumers;
+        qInfo()
+                .noquote()
+            << failedTests
+            << "test(s) failed.";
 
-        QVector<LoadPoint>
-            loadPoints;
+        return 1;
+    }
 
-        QVector<RenewableOutput>
-            renewable;
+    const QString tempPath =
+        tempDir.path();
 
 
-        // 表头错误
-        const QString badHeaderFile =
-            tempDir.path() +
+    // 固定表头错误
+    {
+        QStringList header =
+            generatorHeader();
+
+        header[0] =
+            "错误表头";
+
+        const QString filePath =
+            tempPath +
             "/bad_header.csv";
 
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "100.0",
+                        "150.000"
+                    }
+                });
+
         writeTextFile(
-            badHeaderFile,
-            "id,name,type,segment,price,quantity\n"
-            "G1,一号火电,火电,1,150.000,100.0\n");
+            filePath,
+            makeCsv(
+                header,
+                {row}));
+
+        QVector<GeneratorBid> data;
 
         errors.clear();
 
-        ok =
+        const bool result =
             DataReader::readGeneratorBids(
-                badHeaderFile,
-                generators,
+                filePath,
+                data,
                 errors);
 
         check(
-            !ok,
-            "识别固定表头错误");
-
-
-        // 超过 5 个申报段
-        const QString tooManySegments =
-            tempDir.path() +
-            "/too_many_segments.csv";
-
-        writeTextFile(
-            tooManySegments,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,100.000,10.0\n"
-            "G1,一号火电,火电,2,110.000,10.0\n"
-            "G1,一号火电,火电,3,120.000,10.0\n"
-            "G1,一号火电,火电,4,130.000,10.0\n"
-            "G1,一号火电,火电,5,140.000,10.0\n"
-            "G1,一号火电,火电,6,150.000,10.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                tooManySegments,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别超过 5 个申报段");
-
-
-        // 申报段不连续
-        const QString gapSegmentFile =
-            tempDir.path() +
-            "/gap_segment.csv";
-
-        writeTextFile(
-            gapSegmentFile,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,100.000,10.0\n"
-            "G1,一号火电,火电,3,120.000,10.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                gapSegmentFile,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别申报段不连续");
-
-
-        // 发电报价方向错误
-        const QString generatorPriceFile =
-            tempDir.path() +
-            "/generator_price.csv";
-
-        writeTextFile(
-            generatorPriceFile,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,200.000,10.0\n"
-            "G1,一号火电,火电,2,150.000,10.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                generatorPriceFile,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别发电报价单调错误");
-
-
-        // 购电报价方向错误
-        const QString consumerPriceFile =
-            tempDir.path() +
-            "/consumer_price.csv";
-
-        writeTextFile(
-            consumerPriceFile,
-            "用户ID,用户名称,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "U1,一号用户,1,200.000,10.0\n"
-            "U1,一号用户,2,300.000,10.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readConsumerBids(
-                consumerPriceFile,
-                consumers,
-                errors);
-
-        check(
-            !ok,
-            "识别购电报价单调错误");
-
-
-        // 电价越界
-        const QString priceLimitFile =
-            tempDir.path() +
-            "/price_limit.csv";
-
-        writeTextFile(
-            priceLimitFile,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,541.000,10.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                priceLimitFile,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别 0~540 电价限制");
-
-
-        // 电量为 0
-        const QString zeroQuantityFile =
-            tempDir.path() +
-            "/zero_quantity.csv";
-
-        writeTextFile(
-            zeroQuantityFile,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,150.000,0.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                zeroQuantityFile,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别申报电量必须大于 0");
-
-
-        // 小数精度错误
-        const QString precisionFile =
-            tempDir.path() +
-            "/precision.csv";
-
-        writeTextFile(
-            precisionFile,
-            "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,150.00,100.0\n");
-
-        errors.clear();
-
-        ok =
-            DataReader::readGeneratorBids(
-                precisionFile,
-                generators,
-                errors);
-
-        check(
-            !ok,
-            "识别申报价格小数精度错误");
-
-
-        // 负荷不足 96 点
-        const QString shortLoadFile =
-            tempDir.path() +
-            "/short_load.csv";
-
-        writeTextFile(
-            shortLoadFile,
-            buildLoadCsv(95));
-
-        errors.clear();
-
-        ok =
-            DataReader::readLoadCurve(
-                shortLoadFile,
-                loadPoints,
-                errors);
-
-        check(
-            !ok,
-            "识别负荷曲线不足 96 点");
-
-
-        // 新能源不足 96 点
-        const QString shortRenewableFile =
-            tempDir.path() +
-            "/short_renewable.csv";
-
-        writeTextFile(
-            shortRenewableFile,
-            buildRenewableCsv(95));
-
-        errors.clear();
-
-        ok =
-            DataReader::readRenewableOutput(
-                shortRenewableFile,
-                renewable,
-                errors);
-
-        check(
-            !ok,
-            "识别新能源机组不足 96 点");
+            !result &&
+                containsError(
+                    errors,
+                    "表头"),
+            "识别固定表头错误",
+            failedTests,
+            errors);
     }
 
 
-    qInfo().noquote()
+    // 超过 10 个申报段
+    {
+        QStringList header =
+            generatorHeader();
+
+        header
+            << "出力P11(MW)"
+            << "报价C11(元/MWh)";
+
+        QStringList columns;
+
+        columns
+            << "测试电厂"
+            << "G1"
+            << "火电";
+
+        for (int segment = 1;
+             segment <= 11;
+             ++segment)
+        {
+            columns
+                << "10.0"
+                << QString::number(
+                       100 +
+                       segment);
+        }
+
+        const QString filePath =
+            tempPath +
+            "/too_many_segments.csv";
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                header,
+                {
+                    columns.join(',')
+                }));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                !errors.isEmpty(),
+            "识别超过 10 个申报段",
+            failedTests,
+            errors);
+    }
+
+
+    // 申报段不连续
+    {
+        const QString filePath =
+            tempPath +
+            "/discontinuous_segments.csv";
+
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "50.0",
+                        "150.000"
+                    },
+                    {
+                        "",
+                        ""
+                    },
+                    {
+                        "30.0",
+                        "200.000"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                generatorHeader(),
+                {row}));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "不连续"),
+            "识别申报段不连续",
+            failedTests,
+            errors);
+    }
+
+
+    // 发电报价单调
+    {
+        const QString filePath =
+            tempPath +
+            "/generator_monotonic.csv";
+
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "50.0",
+                        "200.000"
+                    },
+                    {
+                        "50.0",
+                        "180.000"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                generatorHeader(),
+                {row}));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "单调非递减"),
+            "识别发电报价单调错误",
+            failedTests,
+            errors);
+    }
+
+
+    // 购电报价单调
+    {
+        const QString filePath =
+            tempPath +
+            "/consumer_monotonic.csv";
+
+        const QString row =
+            makeConsumerRow(
+                "测试用户",
+                "U1",
+                {
+                    {
+                        "50.0",
+                        "300.000"
+                    },
+                    {
+                        "40.0",
+                        "350.000"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                consumerHeader(),
+                {row}));
+
+        QVector<ConsumerBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readConsumerBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "单调非递增"),
+            "识别购电报价单调错误",
+            failedTests,
+            errors);
+    }
+
+
+    // 电价范围
+    {
+        const QString filePath =
+            tempPath +
+            "/price_range.csv";
+
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "50.0",
+                        "541.000"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                generatorHeader(),
+                {row}));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "0～540"),
+            "识别 0~540 电价限制",
+            failedTests,
+            errors);
+    }
+
+
+    // 申报电量
+    {
+        const QString filePath =
+            tempPath +
+            "/zero_quantity.csv";
+
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "0",
+                        "150.000"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                generatorHeader(),
+                {row}));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "必须大于 0"),
+            "识别申报电量必须大于 0",
+            failedTests,
+            errors);
+    }
+
+
+    // 电价精度
+    {
+        const QString filePath =
+            tempPath +
+            "/price_precision.csv";
+
+        const QString row =
+            makeGeneratorRow(
+                "测试电厂",
+                "G1",
+                "火电",
+                {
+                    {
+                        "50.0",
+                        "150.1234"
+                    }
+                });
+
+        writeTextFile(
+            filePath,
+            makeCsv(
+                generatorHeader(),
+                {row}));
+
+        QVector<GeneratorBid> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readGeneratorBids(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "3 位小数"),
+            "识别申报价格小数精度错误",
+            failedTests,
+            errors);
+    }
+
+
+    // 负荷不足 96 点
+    {
+        const QString filePath =
+            tempPath +
+            "/short_load.csv";
+
+        writeTextFile(
+            filePath,
+            makeLoadCsv(
+                95));
+
+        QVector<LoadPoint> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readLoadCurve(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "96"),
+            "识别负荷曲线不足 96 点",
+            failedTests,
+            errors);
+    }
+
+
+    // 新能源不足 96 点
+    {
+        const QString filePath =
+            tempPath +
+            "/short_renewable.csv";
+
+        writeTextFile(
+            filePath,
+            makeRenewableCsv(
+                "W1",
+                "风电",
+                95));
+
+        QVector<RenewableOutput> data;
+
+        errors.clear();
+
+        const bool result =
+            DataReader::readRenewableOutput(
+                filePath,
+                data,
+                errors);
+
+        check(
+            !result &&
+                containsError(
+                    errors,
+                    "96"),
+            "识别新能源机组不足 96 点",
+            failedTests,
+            errors);
+    }
+
+
+    qInfo()
+            .noquote()
         << "========================================";
 
     if (failedTests == 0)
     {
-        qInfo().noquote()
-        << "All DataReader V1.1 tests passed.";
-
-        return 0;
+        qInfo()
+        .noquote()
+            << "All tests passed.";
+    }
+    else
+    {
+        qInfo()
+        .noquote()
+            << failedTests
+            << "test(s) failed.";
     }
 
-    qCritical().noquote()
-        << failedTests
-        << "test(s) failed.";
-
-    return 1;
+    return failedTests == 0
+               ? 0
+               : 1;
 }
