@@ -21,6 +21,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -377,28 +378,16 @@ QWidget *MainWindow::buildImportPage()
     connect(prefillBtn, &QPushButton::clicked,
             this, &MainWindow::onPrefillByLoad);
 
-    m_genTable = new QTableWidget(0, 5, bidBox);
-    m_genTable->setHorizontalHeaderLabels({
-        QStringLiteral("电厂名称"),
-        QStringLiteral("机组编号"),
-        QStringLiteral("申报段"),
-        QStringLiteral("申报电价 (元/MWh)"),
-        QStringLiteral("申报电量 (MWh)"),
-    });
+    // #90：P1 申报表改为横向段展开（与 CSV 格式一致：一机组一行，段1出力/段1报价/…）
+    // 列数在 refreshImportPage 中按当前数据最大段数动态设置
+    m_genTable = new QTableWidget(0, 0, bidBox);
     m_genTable->horizontalHeader()->setStretchLastSection(true);
     m_genTable->setEditTriggers(QAbstractItemView::DoubleClicked
                                 | QAbstractItemView::EditKeyPressed
                                 | QAbstractItemView::AnyKeyPressed);
     m_genTable->setAlternatingRowColors(true);
 
-    m_conTable = new QTableWidget(0, 5, bidBox);
-    m_conTable->setHorizontalHeaderLabels({
-        QStringLiteral("用户名称"),
-        QStringLiteral("负荷编号"),
-        QStringLiteral("申报段"),
-        QStringLiteral("申报电价 (元/MWh)"),
-        QStringLiteral("申报电量 (MWh)"),
-    });
+    m_conTable = new QTableWidget(0, 0, bidBox);
     m_conTable->horizontalHeader()->setStretchLastSection(true);
     m_conTable->setEditTriggers(QAbstractItemView::DoubleClicked
                                 | QAbstractItemView::EditKeyPressed
@@ -1243,55 +1232,63 @@ void MainWindow::refreshImportPage()
         return it;
     };
 
-    // 发电侧申报表（#89 单时段视图：只显示 m_editPeriod 时段；时段列隐藏，
-    //   电价/电量 item 带 UserRole 源索引，编辑写回用）
-    if (m_genTable) {
-        const auto &gs = m_session.market.generatorBids;
+    // #90：P1 申报表改为横向段展开（与 CSV 格式一致：一机组一行，段1出力/段1报价/…）
+    const auto fillBidTable = [&](QTableWidget *table, const auto &bids,
+                                   const QString &nameHeader, const QString &idHeader) {
+        // 统计当前时段最大段数，动态确定列数
+        int maxSeg = 0;
+        for (int i = 0; i < bids.size(); ++i) {
+            const auto &b = bids[i];
+            if (b.period > 0 && b.period != m_editPeriod)
+                continue;
+            maxSeg = std::max(maxSeg, b.segment);
+        }
+        const int segColCount = maxSeg * 2;
+        const int colCount = 2 + segColCount;
+        table->setColumnCount(colCount);
+        QStringList headers;
+        headers << nameHeader << idHeader;
+        for (int s = 1; s <= maxSeg; ++s) {
+            headers << QStringLiteral("第%1段出力(MW)").arg(s)
+                    << QStringLiteral("第%1段报价(元/MWh)").arg(s);
+        }
+        table->setHorizontalHeaderLabels(headers);
+
         m_loadingBids = true;                 // 填充期间屏蔽 itemChanged（防递归）
-        m_genTable->setRowCount(0);
+        table->setRowCount(0);
+        QHash<QString, int> idToRow;          // 机组/负荷编号 → 行号
         int row = 0;
-        for (int i = 0; i < gs.size(); ++i) {
-            const auto &g = gs[i];
-            if (g.period > 0 && g.period != m_editPeriod)
+        for (int i = 0; i < bids.size(); ++i) {
+            const auto &b = bids[i];
+            if (b.period > 0 && b.period != m_editPeriod)
                 continue;
-            m_genTable->insertRow(row);
-            m_genTable->setItem(row, 0, lockedItem(g.name));
-            m_genTable->setItem(row, 1, lockedItem(g.id));
-            m_genTable->setItem(row, 2, lockedItem(QString::number(g.segment)));
-            auto *priceItem = new QTableWidgetItem(QString::number(g.price, 'f', 1));
-            priceItem->setData(Qt::UserRole, i);
-            auto *qtyItem = new QTableWidgetItem(QString::number(g.quantity, 'f', 1));
+            auto it = idToRow.find(b.id);
+            if (it == idToRow.end()) {
+                table->insertRow(row);
+                table->setItem(row, 0, lockedItem(b.name));
+                table->setItem(row, 1, lockedItem(b.id));
+                it = idToRow.insert(b.id, row);
+                ++row;
+            }
+            const int r = *it;
+            const int qtyCol   = 2 + (b.segment - 1) * 2;       // 出力列
+            const int priceCol = 2 + (b.segment - 1) * 2 + 1;   // 报价列
+            auto *qtyItem = new QTableWidgetItem(QString::number(b.quantity, 'f', 1));
             qtyItem->setData(Qt::UserRole, i);
-            m_genTable->setItem(row, 3, priceItem);
-            m_genTable->setItem(row, 4, qtyItem);
-            ++row;
+            auto *priceItem = new QTableWidgetItem(QString::number(b.price, 'f', 1));
+            priceItem->setData(Qt::UserRole, i);
+            table->setItem(r, qtyCol, qtyItem);
+            table->setItem(r, priceCol, priceItem);
         }
         m_loadingBids = false;
-    }
-    // 购电侧申报表（#89 单时段视图，同上）
-    if (m_conTable) {
-        const auto &cs = m_session.market.consumerBids;
-        m_loadingBids = true;
-        m_conTable->setRowCount(0);
-        int row = 0;
-        for (int i = 0; i < cs.size(); ++i) {
-            const auto &c = cs[i];
-            if (c.period > 0 && c.period != m_editPeriod)
-                continue;
-            m_conTable->insertRow(row);
-            m_conTable->setItem(row, 0, lockedItem(c.name));
-            m_conTable->setItem(row, 1, lockedItem(c.id));
-            m_conTable->setItem(row, 2, lockedItem(QString::number(c.segment)));
-            auto *priceItem = new QTableWidgetItem(QString::number(c.price, 'f', 1));
-            priceItem->setData(Qt::UserRole, i);
-            auto *qtyItem = new QTableWidgetItem(QString::number(c.quantity, 'f', 1));
-            qtyItem->setData(Qt::UserRole, i);
-            m_conTable->setItem(row, 3, priceItem);
-            m_conTable->setItem(row, 4, qtyItem);
-            ++row;
-        }
-        m_loadingBids = false;
-    }
+    };
+
+    if (m_genTable)
+        fillBidTable(m_genTable, m_session.market.generatorBids,
+                     QStringLiteral("电厂名称"), QStringLiteral("机组编号"));
+    if (m_conTable)
+        fillBidTable(m_conTable, m_session.market.consumerBids,
+                     QStringLiteral("用户名称"), QStringLiteral("负荷编号"));
 
     // #89：本时段供需概览（购电申报总量 / 负荷曲线 / 发电可用）
     if (m_periodHint) {
@@ -1374,12 +1371,13 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     if (!isGen && tbl != m_conTable)
         return;
     const int col = item->column();
-    // 两表列结构一致（#89 单时段视图）：名称/编号/申报段/电价(3)/电量(4)
-    const int priceCol = 3;
-    const int qtyCol   = 4;
-    if (col != priceCol && col != qtyCol)
+    // #90：横向段展开布局，列结构为 名称/编号/段1出力/段1报价/段2出力/段2报价/…
+    //   col<2 为锁定列；偶数列（从2开始）为出力，奇数列为报价
+    if (col < 2)
         return;
-    // #89：单时段视图按 UserRole 源索引定位（表格行 ≠ bids 下标）
+    const bool isQty   = ((col - 2) % 2 == 0);     // 出力列
+    const bool isPrice = !isQty;                    // 报价列
+    // 按 UserRole 源索引定位（表格行/列 ≠ bids 下标）
     const int srcIdx = item->data(Qt::UserRole).toInt();
 
     // 两种申报结构都有 price/quantity 字段，用泛型 lambda 统一处理
@@ -1388,7 +1386,7 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
             return;
         auto &bid = bids[srcIdx];
 
-        const double oldVal = (col == priceCol) ? bid.price : bid.quantity;
+        const double oldVal = isPrice ? bid.price : bid.quantity;
         const auto revert = [this, item, oldVal]() {
             m_loadingBids = true;
             item->setText(QString::number(oldVal, 'f', 1));
@@ -1402,12 +1400,12 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
             statusBar()->showMessage(QStringLiteral("输入无效：请填写数字（如 260 或 260.5）"), 6000);
             return;
         }
-        if (col == priceCol && (val < 0.0 || val > 540.0)) {
+        if (isPrice && (val < 0.0 || val > 540.0)) {
             revert();
             statusBar()->showMessage(QStringLiteral("申报电价需在 0~540 元/MWh 之间（限价规则）"), 6000);
             return;
         }
-        if (col == qtyCol && val < 0.0) {
+        if (isQty && val < 0.0) {
             revert();
             statusBar()->showMessage(QStringLiteral("申报电量需为非负数（0 = 该时段该段不申报/停机）"), 6000);
             return;
@@ -1415,7 +1413,7 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         if (qFuzzyCompare(val + 1.0, oldVal + 1.0))   // 数值未变（仅文本格式差异）
             return;
 
-        if (col == priceCol)
+        if (isPrice)
             bid.price = val;
         else
             bid.quantity = val;
