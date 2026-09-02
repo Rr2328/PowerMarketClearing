@@ -8,16 +8,17 @@
 #include "core/app_session.h"
 
 class QComboBox;
+class QChartView;
+class QGroupBox;
+class QTableWidgetItem;
 class QLabel;
 class QListWidget;
 class QLineSeries;
 class QPieSeries;
 class QScatterSeries;
 class QPushButton;
-class QSlider;
 class QStackedWidget;
 class QTableWidget;
-class QTableWidgetItem;
 class QTabWidget;
 class QButtonGroup;
 class QValueAxis;
@@ -28,7 +29,7 @@ class QValueAxis;
 //   导航永不锁死；P3/P4/P5 无出清结果时显示空态引导卡片
 // 接线状态（feature/ui-wiring 分支）：
 //   - P1 数据导入：接入 A 模块 DataReader::readAll / validateRelations（真实校验）
-//   - P2 仿真控制：接入 FakeEngine（内部已接真引擎 ClearMarket；负荷退场 + 滑块直给）
+//   - P2 仿真控制：接入 A 模块 buildPeriodScenarios + FakeEngine（B 位算法待替换）
 //   - P3/P4/P5：全部改读 AppSession.result，支持三视角过滤
 class MainWindow : public QMainWindow
 {
@@ -39,13 +40,13 @@ public:
 
 private slots:
     void onStartDemo();     // 一键演示：加载内置基准例 → 单时段对拍出清
-    void onRunSim();        // 开始仿真：逐时段出清（负荷退场口径）
+    void onRunSim();        // 开始仿真：场景构建 → 逐时段出清
     void onExportDaily();   // 导出结算日报 CSV（按当前视角）
     void onExportCurve();   // 导出电价曲线数据 CSV
     void onLoadSamples();   // P1：一键加载内置样例（benchmark 或 scenario）
     void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别两张申报表）
     void onClearData();     // P1：清空数据
-    void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表电价/电量编辑 → 写回 + 自动重算
+    void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表编辑写回 + 自动重算（#82）
 
 private:
     // 封面页 + 五个页面 + 空态卡片
@@ -60,9 +61,9 @@ private:
 
     // 数据与出清
     bool loadDataFiles(const QString &genFile, const QString &conFile,
-                       const QString &sourceName);   // 读取 + 校验 → m_session（负荷概念已退场）
+                       const QString &sourceName);   // 读取 + 校验 → m_session
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
-    void runClearing();                              // FakeEngine 逐时段出清（负荷退场口径）
+    void runClearing();                              // 多时段出清（新能源 = 滑块直给）
 
     // 三视角
     void setPerspective(Perspective p);              // 切换视角（不重算）
@@ -70,9 +71,9 @@ private:
 
     // 状态与刷新
     void setHasResult(bool on);
-    void rerunIfReady();           // 数据/滑块变更后：已有结果则立即重算并刷新（基准例走单时段对拍）
-    void renderCheckBar();         // P1：校验汇总条渲染（导入与界面编辑共用）
     void refreshImportPage();      // P1：按视角填充申报表 + 状态卡
+    void renderCheckBar();         // P1：校验汇总条（导入与编辑共用，#82）
+    void rerunIfReady();           // 改申报/滑块后：已有结果则即时重算（#82）
     void refreshResultPage();      // P3：指标卡 + 明细表（视角化）
     void refreshChartPage();       // P4：供需阶梯（真申报）+ 分时电价（真结果）
     void refreshExportPage();      // P5：结算摘要 + 文件名预览
@@ -91,7 +92,6 @@ private:
     QPushButton    *m_btnMcp       = nullptr;   // MCP 模式卡（checkable，与 PAB 互斥）
     QPushButton    *m_btnPab       = nullptr;
     QComboBox      *m_granCombo    = nullptr;
-    QSlider        *m_renewSlider  = nullptr;   // P2：新能源出力滑块（0~200 MW，直给 0 价段）
     QLabel         *m_pageTitle    = nullptr;
     QLabel         *m_pageSub      = nullptr;
     QLabel         *m_paramSummary = nullptr;
@@ -104,11 +104,12 @@ private:
     QLineSeries    *m_demandSeries = nullptr;   // 供需交叉图：需求阶梯（真申报）
     QLineSeries    *m_clearingLine = nullptr;   // 供需交叉图：出清价水平线
     QScatterSeries *m_clearPoint   = nullptr;   // 供需交叉图：出清点标记（成交×出清价）
+    QPieSeries     *m_mixPie       = nullptr;   // P3 出力构成环形图（新能源 vs 常规，平台视角）
+    QChartView     *m_mixView      = nullptr;   // P3 环形图视图容器
+    QGroupBox      *m_mixBox       = nullptr;   // P3 环形图容器（仅平台视角可见）
     QValueAxis     *m_axisSupplyX  = nullptr;   // 供需图 X（累计电量）
     QValueAxis     *m_axisSupplyY  = nullptr;   // 供需图 Y（报价）
     QValueAxis     *m_axisPriceX   = nullptr;   // 分时电价 X（时段）
-    QPieSeries     *m_energyPie    = nullptr;   // P3：全天出力构成环图（仅平台视角）
-    QWidget        *m_energyPieBox = nullptr;   // 环图容器（视角过滤整体显隐）
 
     // 三视角切换条
     QButtonGroup   *m_perspGroup   = nullptr;
@@ -120,7 +121,7 @@ private:
     QTabWidget     *m_importTabs   = nullptr;
     QTableWidget   *m_genTable     = nullptr;
     QTableWidget   *m_conTable     = nullptr;
-    QLabel         *m_statusBadges[2] = {nullptr, nullptr};   // 发电/购电申报状态（负荷曲线已退场）
+    QLabel         *m_statusBadges[2] = {nullptr, nullptr};
     QLabel         *m_checkText    = nullptr;
 
     // 指标卡（P3）
@@ -143,8 +144,10 @@ private:
     AppSession m_session;
 
     bool m_hasResult = false;
-    bool m_loadingBids = false;        // 程序填充申报表期间屏蔽 itemChanged（防递归）
-    QStringList m_checkErrors;         // 最近一次跨文件校验结果（导入/编辑后更新）
+
+    // #82：申报表编辑支持
+    bool m_loadingBids = false;      // 刷新表格时屏蔽 itemChanged（防递归）
+    QStringList m_checkErrors;       // 最近一次跨文件校验结果（编辑后即时更新）
 };
 
 #endif // MAINWINDOW_H

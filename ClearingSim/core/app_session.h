@@ -18,9 +18,9 @@ struct AppSession
     bool hasData = false;              // 申报数据是否已导入（驱动 P2 就绪灯）
     bool hasResult = false;            // 出清是否已完成（驱动 P3/P4/P5 空态卡）
 
-    Perspective perspective = Perspective::Platform;   // 当前视角
+    double renewMW = 60.0;             // P2 滑块：每时段新能源出力水平（MW，0~200）
 
-    double renewMW = 60.0;         // P2 新能源滑块当前值（MW，0~200，直给 0 价供给段）
+    Perspective perspective = Perspective::Platform;   // 当前视角
 
     QString dataSource;                // 数据源描述（内置基准例/内置场景/自定义）
 
