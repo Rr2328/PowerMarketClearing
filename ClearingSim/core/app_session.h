@@ -20,6 +20,8 @@ struct AppSession
 
     Perspective perspective = Perspective::Platform;   // 当前视角
 
+    double renewMW = 60.0;         // P2 新能源滑块当前值（MW，0~200，直给 0 价供给段）
+
     QString dataSource;                // 数据源描述（内置基准例/内置场景/自定义）
 
     void resetResult()

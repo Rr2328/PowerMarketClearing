@@ -11,6 +11,8 @@
 // 出清结果数据结构（界面消费的唯一接口，也是与 B 位引擎的对齐边界）
 //   2026-09-02 起 FakeEngine 内部已接入 B 位真实引擎 ClearMarket
 //   （逐对撮合 + MCP/PAB 结算），界面与视角过滤零改动。
+//   2026-09-02 #70 起：负荷概念退场（每时段需求 = 购电侧申报总量），
+//   新能源出力由平台视角滑块直给（0 价供给段，优先中标）。
 // ------------------------------------------------------------------
 
 // 单个主体在某时段的成交明细（三视角过滤的核心数据源）
@@ -29,8 +31,8 @@ struct PeriodResult
 {
     int period = 0;
     QString time;             // 时段标签，如 "01:00"（24 时段）/"00:15"（96 时段）
-    double loadMW = 0.0;      // 该时段负荷
-    double renewMW = 0.0;     // 该时段新能源出力（优先中标）
+    double loadMW = 0.0;      // 该时段总需求（购电侧申报总量，负荷概念已退场）
+    double renewMW = 0.0;     // 该时段新能源消纳量（滑块 0 价段实际成交）
     double clearingPrice = 0.0; // 该时段出清价
     double clearedMW = 0.0;     // 该时段总成交电量
     double genFee = 0.0;        // 发电侧结算总额
@@ -49,23 +51,33 @@ struct ClearingResult
 
 // ------------------------------------------------------------------
 // 引擎外壳：内部调用 B 位真实引擎（ClearMarket + MCP/PAB 结算）
-//   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
+//   负荷退场：每时段需求 = 购电侧申报总量（恒定）；
+//   新能源由滑块 MW 直给（0 价供给段，价格接受者优先中标）。
 // ------------------------------------------------------------------
 class FakeEngine
 {
 public:
-    // 一键演示：单时段基准出清
+    // 申报类型是否为新能源（风电/光伏）：此类申报段不参与撮合，
+    // 新能源出力由平台视角滑块直给（0 价供给段）
+    static inline bool isRenewableType(const QString &type)
+    {
+        return type.contains(QStringLiteral("风电"))
+               || type.contains(QStringLiteral("光伏"));
+    }
+
+    // 一键演示：单时段基准出清（真引擎对拍锚点 250 / 50 / 12500）
     static ClearingResult clearBenchmark(const MarketData &market, const QString &mode);
 
-    // 开始仿真：逐时段连续出清（负荷双驼峰 + 新能源优先 + 申报按负荷缩放）
-    static ClearingResult clearPeriods(const QVector<PeriodScenario> &scenarios,
-                                       const MarketData &market, const QString &mode);
+    // 开始仿真：逐时段连续出清（负荷退场：需求 = 购电申报总量恒定；
+    // 新能源由滑块直给 0 价段，优先中标）
+    static ClearingResult clearPeriods(const MarketData &market, int periodCount,
+                                       double renewSliderMW, const QString &mode);
 
 private:
     // 单个时段的出清核心：构造真引擎入参 → ClearMarket → 聚合为 PeriodResult
     static PeriodResult clearOne(const MarketData &market, int period,
-                                 const QString &time, double loadMW, double renewMW,
-                                 double scale, const QString &mode);
+                                 const QString &time, double demandMW,
+                                 double renewSliderMW, const QString &mode);
 };
 
 #endif // FAKE_ENGINE_H

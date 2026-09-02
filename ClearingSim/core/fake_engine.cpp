@@ -11,18 +11,23 @@
 //   本文件是界面的"引擎外壳"：对外接口结构（ClearingResult /
 //   PeriodResult / EntityCleared）保持不变，内部已替换为 B 位
 //   真实出清引擎 ClearMarket（逐对撮合）+ MCP/PAB 双模式结算。
-//   新能源以 0 价供给段参与撮合（价格接受者，优先中标）。
+//   2026-09-02 #70 起：
+//   1) 负荷概念退场：每时段需求 = 购电侧申报总量（恒定，不由曲线驱动）
+//   2) 新能源滑块直给：平台视角滑块 MW 作为 RENEW 0 价供给段参与
+//      撮合（价格接受者，优先中标）；申报表内风/光段不参与撮合
 // ============================================================
 
 namespace {
 
-// 该时段新能源出力汇总
-double sumRenewable(const QVector<RenewableOutput> &renewables)
+// 时段时间标签（24 时段整点 / 96 时段 15 分钟）
+QString timeText(int period, int periodCount)
 {
-    double sum = 0.0;
-    for (const auto &r : renewables)
-        sum += r.output;
-    return sum;
+    if (periodCount == 24)
+        return QStringLiteral("%1:00").arg(period, 2, 10, QChar('0'));
+    const int totalMin = period * 15;
+    return QStringLiteral("%1:%2")
+        .arg(totalMin / 60, 2, 10, QChar('0'))
+        .arg(totalMin % 60, 2, 10, QChar('0'));
 }
 
 } // namespace
@@ -42,32 +47,36 @@ ClearingResult FakeEngine::clearBenchmark(const MarketData &market, const QStrin
     result.sourceName = QStringLiteral("内置基准例 · 真引擎出清");
 
     result.periods.append(
-        clearOne(market, 1, QStringLiteral("全日"), demand, 0.0, 1.0, mode));
+        clearOne(market, 1, QStringLiteral("全日"), demand, 0.0, mode));
     return result;
 }
 
 // ------------------------------------------------------------------
 // 开始仿真：逐时段连续出清（真引擎）
-//   申报按「该时段负荷 ÷ 当日总量」缩放（对齐数据契约 3.4 口径）
+//   负荷退场：每时段需求 = 购电申报总量（恒定）；
+//   新能源 = 滑块 MW 直给（每时段相同，作为 0 价段参与撮合）
 // ------------------------------------------------------------------
-ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios,
-                                        const MarketData &market, const QString &mode)
+ClearingResult FakeEngine::clearPeriods(const MarketData &market, int periodCount,
+                                        double renewSliderMW, const QString &mode)
 {
     ClearingResult result;
     result.mode = mode;
     result.sourceName = QStringLiteral("内置场景 · 逐时段连续仿真（真引擎）");
 
-    double loadTotal = 0.0;
-    for (const auto &s : scenarios)
-        loadTotal += s.loadMW;
-    if (loadTotal <= 0.0)
+    if (periodCount != 24 && periodCount != 96)
         return result;
 
-    for (const auto &s : scenarios) {
-        const double scale = s.loadMW / loadTotal;          // 契约 3.4 缩放
-        const double renew = sumRenewable(s.renewableBase); // 新能源优先
+    // 每时段总需求 = 购电侧申报总量（负荷概念已退场）
+    double demand = 0.0;
+    for (const auto &c : market.consumerBids)
+        demand += c.quantity;
+    if (demand <= 0.0)
+        return result;
+
+    for (int period = 1; period <= periodCount; ++period) {
         result.periods.append(
-            clearOne(market, s.period, s.time, s.loadMW, renew, scale, mode));
+            clearOne(market, period, timeText(period, periodCount),
+                     demand, renewSliderMW, mode));
     }
     return result;
 }
@@ -76,46 +85,49 @@ ClearingResult FakeEngine::clearPeriods(const QVector<PeriodScenario> &scenarios
 // 单时段出清核心：调用 B 位真引擎 ClearMarket，再聚合为界面结构
 // ------------------------------------------------------------------
 PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
-                                  const QString &time, double loadMW, double renewMW,
-                                  double scale, const QString &mode)
+                                  const QString &time, double demandMW,
+                                  double renewSliderMW, const QString &mode)
 {
     PeriodResult out;
     out.period = period;
     out.time = time;
-    out.loadMW = loadMW;
-    out.renewMW = renewMW;
+    out.loadMW = demandMW;   // 语义：该时段总需求（购电申报总量，负荷概念已退场）
 
-    // ---- 构造真引擎入参：发电侧（新能源 = 0 价供给段，优先中标） ----
+    // ---- 构造真引擎入参：发电侧 ----
+    //   供给 = 滑块 RENEW 0 价段（价格接受者，优先中标）
+    //        + 申报表常规段（风/光申报段不参与撮合，出力由滑块代表）
     QVector<Generator> generators;
-    if (renewMW > 0.0) {
+    if (renewSliderMW > 0.0) {
         Generator r;
         r.id = QStringLiteral("RENEW");
         r.name = QStringLiteral("新能源出力");
         r.type = QStringLiteral("NEW");
         r.price = 0.0;
-        r.capacity = renewMW;
+        r.capacity = renewSliderMW;
         r.segment = 0;
         generators.append(r);
     }
     for (const auto &g : market.generatorBids) {
+        if (isRenewableType(g.type))
+            continue;
         Generator e;
         e.id = g.id;
         e.name = g.name;
         e.type = g.type;
         e.price = g.price;
-        e.capacity = g.quantity * scale;
+        e.capacity = g.quantity;
         e.segment = g.segment;
         generators.append(e);
     }
 
-    // ---- 购电侧：按契约 3.4 缩放 ----
+    // ---- 购电侧：申报全量（负荷退场，无缩放） ----
     QVector<Consumer> consumers;
     for (const auto &c : market.consumerBids) {
         Consumer e;
         e.id = c.id;
         e.name = c.name;
         e.price = c.price;
-        e.demand = c.quantity * scale;
+        e.demand = c.quantity;
         e.segment = c.segment;
         consumers.append(e);
     }
@@ -131,9 +143,13 @@ PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
     //   发电侧：MCP 按出清价结算、PAB 按各段申报价结算
     //   购电侧：统一按出清价结算（与 settle() 现行口径一致）
     QHash<QString, EntityCleared> genMap, conMap;
+    double renewCleared = 0.0;   // RENEW 段实际消纳量
     for (const auto &t : cr.trade) {
         if (t.volume <= 0.0)
             continue;
+
+        if (t.generatorID == QStringLiteral("RENEW"))
+            renewCleared += t.volume;
 
         const QString gk = t.generatorID + QLatin1Char('#')
                            + QString::number(t.generatorseg);
@@ -179,6 +195,7 @@ PeriodResult FakeEngine::clearOne(const MarketData &market, int period,
 
     out.genDetails = genMap.values();
     out.conDetails = conMap.values();
+    out.renewMW = renewCleared;   // 新能源实际消纳量（= RENEW 段成交）
 
     // 展示排序：发电侧按报价升序、购电侧按报价降序
     std::sort(out.genDetails.begin(), out.genDetails.end(),

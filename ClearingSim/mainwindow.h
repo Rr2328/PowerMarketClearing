@@ -10,8 +10,10 @@ class QComboBox;
 class QLabel;
 class QListWidget;
 class QLineSeries;
+class QPieSeries;
 class QScatterSeries;
 class QPushButton;
+class QSlider;
 class QStackedWidget;
 class QTableWidget;
 class QTabWidget;
@@ -24,7 +26,7 @@ class QValueAxis;
 //   导航永不锁死；P3/P4/P5 无出清结果时显示空态引导卡片
 // 接线状态（feature/ui-wiring 分支）：
 //   - P1 数据导入：接入 A 模块 DataReader::readAll / validateRelations（真实校验）
-//   - P2 仿真控制：接入 A 模块 buildPeriodScenarios + FakeEngine（B 位算法待替换）
+//   - P2 仿真控制：接入 FakeEngine（内部已接真引擎 ClearMarket；负荷退场 + 滑块直给）
 //   - P3/P4/P5：全部改读 AppSession.result，支持三视角过滤
 class MainWindow : public QMainWindow
 {
@@ -35,11 +37,11 @@ public:
 
 private slots:
     void onStartDemo();     // 一键演示：加载内置基准例 → 单时段对拍出清
-    void onRunSim();        // 开始仿真：场景构建 → 逐时段出清
+    void onRunSim();        // 开始仿真：逐时段出清（负荷退场口径）
     void onExportDaily();   // 导出结算日报 CSV（按当前视角）
     void onExportCurve();   // 导出电价曲线数据 CSV
     void onLoadSamples();   // P1：一键加载内置样例（benchmark 或 scenario）
-    void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别四张表）
+    void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别两张申报表）
     void onClearData();     // P1：清空数据
 
 private:
@@ -55,10 +57,9 @@ private:
 
     // 数据与出清
     bool loadDataFiles(const QString &genFile, const QString &conFile,
-                       const QString &loadFile, const QString &renewFile,
-                       const QString &sourceName);   // 读取 + 校验 → m_session
+                       const QString &sourceName);   // 读取 + 校验 → m_session（负荷概念已退场）
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
-    void runClearing();                              // 场景构建 + FakeEngine 出清
+    void runClearing();                              // FakeEngine 逐时段出清（负荷退场口径）
 
     // 三视角
     void setPerspective(Perspective p);              // 切换视角（不重算）
@@ -85,6 +86,7 @@ private:
     QPushButton    *m_btnMcp       = nullptr;   // MCP 模式卡（checkable，与 PAB 互斥）
     QPushButton    *m_btnPab       = nullptr;
     QComboBox      *m_granCombo    = nullptr;
+    QSlider        *m_renewSlider  = nullptr;   // P2：新能源出力滑块（0~200 MW，直给 0 价段）
     QLabel         *m_pageTitle    = nullptr;
     QLabel         *m_pageSub      = nullptr;
     QLabel         *m_paramSummary = nullptr;
@@ -100,6 +102,8 @@ private:
     QValueAxis     *m_axisSupplyX  = nullptr;   // 供需图 X（累计电量）
     QValueAxis     *m_axisSupplyY  = nullptr;   // 供需图 Y（报价）
     QValueAxis     *m_axisPriceX   = nullptr;   // 分时电价 X（时段）
+    QPieSeries     *m_energyPie    = nullptr;   // P3：全天出力构成环图（仅平台视角）
+    QWidget        *m_energyPieBox = nullptr;   // 环图容器（视角过滤整体显隐）
 
     // 三视角切换条
     QButtonGroup   *m_perspGroup   = nullptr;
@@ -111,7 +115,7 @@ private:
     QTabWidget     *m_importTabs   = nullptr;
     QTableWidget   *m_genTable     = nullptr;
     QTableWidget   *m_conTable     = nullptr;
-    QLabel         *m_statusBadges[4] = {nullptr, nullptr, nullptr, nullptr};
+    QLabel         *m_statusBadges[2] = {nullptr, nullptr};   // 发电/购电申报状态（负荷曲线已退场）
     QLabel         *m_checkText    = nullptr;
 
     // 指标卡（P3）
