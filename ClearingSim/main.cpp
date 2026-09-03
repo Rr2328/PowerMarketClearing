@@ -11,7 +11,7 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     QVector<TimeMarketData> daydata;
     DataReader datareader;
-    daydata=datareader.readMarketData("market_test.csv");
+    daydata=datareader.readMarketData("generator_bids_24period.csv","consumer_bids_24period.csv");
     SettlementMode mode=SettlementMode::MCP;
     DayResult dayresult=run96market(daydata,mode);
     for(auto& result:dayresult.result)
@@ -36,7 +36,7 @@ int main(int argc, char *argv[])
             for(auto& settle:result.settlement)
             {
                 qDebug()<<settle.id<<"的成交量为："<<settle.volume;
-                if(settle.id[0]=="G")
+                if(settle.id[0]=="G"||settle.id[0]=="W"||settle.id[0]=="S")
                 {
                     qDebug()<<settle.id<<"的收入为："<<settle.amount;
                 }
