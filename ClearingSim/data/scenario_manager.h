@@ -13,7 +13,9 @@ enum class TimeGranularity
     QuarterHourly96
 };
 
-// 单个时段交给算法的数据
+// 单个时段的数据场景
+// 这里保存的是数据管理层整理完成后的标准数据，
+// 后续再转换成算法所需要的 TimeMarketData。
 struct PeriodScenario
 {
     int period = 0;
@@ -24,13 +26,29 @@ struct PeriodScenario
 
     QVector<GeneratorBid> generatorBids;
     QVector<ConsumerBid> consumerBids;
+
+    // 当前保存新能源基准出力。
+    // 后续新能源渗透率的实际出力计算方式，
+    // 等组内接口确定后再统一处理。
     QVector<RenewableOutput> renewableBase;
+
+    void clear()
+    {
+        period = 0;
+        time.clear();
+
+        intervalHours = 0.0;
+        loadMW = 0.0;
+
+        generatorBids.clear();
+        consumerBids.clear();
+        renewableBase.clear();
+    }
 };
 
 class ScenarioManager
 {
 public:
-    // 保留 96→24 数据转换工具
     static bool aggregateLoadTo24(
         const QVector<LoadPoint> &load96,
         QVector<LoadPoint> &load24,
@@ -41,8 +59,6 @@ public:
         QVector<RenewableOutput> &renewable24,
         QStringList &errors);
 
-    // 根据已经读取好的 24/96 时段 MarketData
-    // 构建对应的单时段场景
     static bool buildPeriodScenarios(
         const MarketData &data,
         TimeGranularity granularity,

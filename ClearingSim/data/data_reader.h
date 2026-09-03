@@ -34,17 +34,16 @@ struct ConsumerBid
     int period = 0;
 };
 
-// 负荷曲线
+// 系统负荷曲线
 struct LoadPoint
 {
     int period = 0;
-
     QString time;
 
     double load = 0.0;
 };
 
-// 新能源出力
+// 新能源基准出力
 struct RenewableOutput
 {
     QString generatorId;
@@ -55,7 +54,7 @@ struct RenewableOutput
     double output = 0.0;
 };
 
-// 一套场景的数据文件
+// 一套场景对应的数据文件
 struct DataFileSet
 {
     QString generatorBidsFile;
@@ -64,7 +63,7 @@ struct DataFileSet
     QString renewableOutputFile;
 };
 
-// 统一市场数据
+// 数据管理层统一市场数据
 struct MarketData
 {
     QVector<GeneratorBid> generatorBids;
@@ -78,6 +77,14 @@ struct MarketData
         consumerBids.clear();
         loadCurve.clear();
         renewableOutputs.clear();
+    }
+
+    bool isEmpty() const
+    {
+        return generatorBids.isEmpty()
+        && consumerBids.isEmpty()
+            && loadCurve.isEmpty()
+            && renewableOutputs.isEmpty();
     }
 };
 
