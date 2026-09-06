@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
     DataReader datareader;
     daydata=datareader.readMarketData("generator_bids_24period.csv","consumer_bids_24period.csv");
     SettlementMode mode=SettlementMode::MCP;
-    DayResult dayresult=run96market(daydata,mode);
+    DayResult dayresult=runmarket(daydata,mode);
     for(auto& result:dayresult.result)
     {
         qDebug()<<"————————————第"<<result.period<<"时段出清测试结果——————————";

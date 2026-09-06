@@ -12,7 +12,7 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
     int cindex=0;
     QVector<double>volumn;
     for (int i = 0; i < generators.size(); ++i) {
-        volumn.append(generators[i].capacity);
+        volumn.append(generators[i].quantity);
     }
     constexpr double EPS = 1e-9;
     if (generators.isEmpty() || consumers.isEmpty()) {
@@ -23,7 +23,7 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
     while(gindex<generators.size()&&cindex<consumers.size()&&generators[gindex].price<=consumers[cindex].price)
     {
         Trade trade;
-        double tradevolume=std::min(generators[gindex].capacity,consumers[cindex].demand);
+        double tradevolume=std::min(generators[gindex].quantity,consumers[cindex].quantity);
         trade.consumerseg=consumers[cindex].segment;
         trade.generatorseg=generators[gindex].segment;
         trade.consumerID=consumers[cindex].id;
@@ -34,10 +34,10 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
         clearresult.trade.append(trade);
         clearresult.totalvolume+=tradevolume;
         lastprice=generators[gindex].price;
-        generators[gindex].capacity-=tradevolume;
-        consumers[cindex].demand-=tradevolume;
-        if(generators[gindex].capacity<=EPS)gindex++;
-        if(consumers[cindex].demand<=EPS)cindex++;
+        generators[gindex].quantity-=tradevolume;
+        consumers[cindex].quantity-=tradevolume;
+        if(generators[gindex].quantity<=EPS)gindex++;
+        if(consumers[cindex].quantity<=EPS)cindex++;
     }
     clearresult.clearingprice=lastprice;
     return clearresult;

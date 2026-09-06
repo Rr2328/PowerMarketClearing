@@ -1,6 +1,6 @@
 #include"market_runner.h"
 #include"clearing_engine.h"
-DayResult run96market(QVector<TimeMarketData>daydata,SettlementMode mode)
+DayResult runmarket(QVector<TimeMarketData>daydata,SettlementMode mode)
 {
     DayResult dayresult;
     for(auto& data:daydata)

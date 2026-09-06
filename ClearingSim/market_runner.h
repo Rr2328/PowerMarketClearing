@@ -6,6 +6,9 @@
 struct TimeMarketData
 {
     int period;
+    QString time;
+    double intervalHours = 0.0;
+    double loadMW = 0.0;
     QVector<Generator>generators;
     QVector<Consumer>consumers;
 };
@@ -20,5 +23,5 @@ struct DayResult
     QVector<PeriodResult>result;
 };
 
-DayResult run96market(QVector<TimeMarketData>daydata,SettlementMode mode);
+DayResult runmarket(QVector<TimeMarketData>daydata,SettlementMode mode);
 #endif // MARKET_RUNNER_H
