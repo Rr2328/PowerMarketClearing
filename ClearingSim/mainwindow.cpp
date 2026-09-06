@@ -1084,6 +1084,7 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     }
 
     m_session.market = d;
+    m_session.marketBaseline = d;       // 拍快照：按负荷预填的重置基准（幂等）
     m_session.dataSource = sourceName;
     m_session.hasData = true;
     m_session.resetResult();
@@ -1169,6 +1170,7 @@ void MainWindow::onImportCsv()
 void MainWindow::onClearData()
 {
     m_session.market = MarketData();
+    m_session.marketBaseline = MarketData();   // #92：同步清空原始基准快照
     m_session.dataSource.clear();
     m_session.hasData = false;
     m_session.resetResult();
@@ -1303,18 +1305,40 @@ void MainWindow::refreshImportPage()
                 if (g.period == m_editPeriod || g.period <= 0)
                     genSum += g.quantity;
             QString loadTxt = QStringLiteral("—");
+            double loadT = 0.0;
             for (const auto &lp : m_session.market.loadCurve) {
                 if (lp.period == m_editPeriod) {
                     loadTxt = QStringLiteral("%1 MW").arg(lp.load, 0, 'f', 1);
+                    loadT = lp.load;
                     break;
                 }
             }
+
+            // #92：当前时段相对原始基准的累计缩放因子
+            //   ratio = 当前电量 / 原始基准电量（按主体累加取均值）
+            //   1.0 = 未缩放，< 1 = 已缩小，> 1 = 已放大
+            QString scaleTxt = QStringLiteral("—");
+            if (!m_session.marketBaseline.generatorBids.isEmpty() && loadT > 0.0) {
+                double curSum = 0.0, baseSum = 0.0;
+                for (const auto &g : m_session.market.generatorBids)
+                    if (g.period == m_editPeriod || g.period <= 0)
+                        curSum += g.quantity;
+                for (const auto &g : m_session.marketBaseline.generatorBids)
+                    if (g.period == m_editPeriod || g.period <= 0)
+                        baseSum += g.quantity;
+                if (baseSum > 0.0) {
+                    const double ratio = curSum / baseSum;
+                    scaleTxt = QStringLiteral("×%1").arg(ratio, 0, 'f', 3);
+                }
+            }
+
             m_periodHint->setText(QStringLiteral(
-                                      "第 %1 时段：购电申报 %2 MW · 发电申报 %3 MW · 负荷曲线 %4")
+                                      "第 %1 时段：购电 %2 MW · 发电 %3 MW · 负荷 %4 · 当前缩放 %5")
                                       .arg(m_editPeriod)
                                       .arg(conSum, 0, 'f', 1)
                                       .arg(genSum, 0, 'f', 1)
-                                      .arg(loadTxt));
+                                      .arg(loadTxt)
+                                      .arg(scaleTxt));
         }
     }
 
@@ -1466,6 +1490,8 @@ void MainWindow::onEditPeriodChanged(int index)
 // #89 P1：按负荷曲线预填当前时段申报量
 //   购电/发电申报量同乘 负荷(t)/平均负荷（供需结构保持，
 //   逐时段供需平衡态不被破坏），申报价不动
+//   #92：幂等设计——每次点击都基于 marketBaseline（原始基准），
+//        而非当前已缩放值；重复点击结果一致
 // ============================================================
 void MainWindow::onPrefillByLoad()
 {
@@ -1493,24 +1519,54 @@ void MainWindow::onPrefillByLoad()
     const double factor = loadT / avg;
 
     int nCon = 0, nGen = 0;
-    for (auto &c : m_session.market.consumerBids) {
-        if (c.period == m_editPeriod || c.period <= 0) {
-            c.quantity *= factor;
+
+    // #92：先用 baseline 恢复当前时段的电量，再 × factor（幂等）
+    auto prefillSide = [&](QVector<GeneratorBid> &side,
+                           const QVector<GeneratorBid> &baseline) {
+        for (int i = 0; i < side.size(); ++i) {
+            auto &b = side[i];
+            if (b.period > 0 && b.period != m_editPeriod)
+                continue;
+            // 从 baseline 找匹配（period+id+segment 三轴定位）
+            for (const auto &bb : baseline) {
+                if (bb.period == b.period && bb.id == b.id && bb.segment == b.segment) {
+                    b.quantity = bb.quantity * factor;
+                    break;
+                }
+            }
+        }
+    };
+    auto prefillCon = [&](QVector<ConsumerBid> &side,
+                          const QVector<ConsumerBid> &baseline) {
+        for (int i = 0; i < side.size(); ++i) {
+            auto &b = side[i];
+            if (b.period > 0 && b.period != m_editPeriod)
+                continue;
+            for (const auto &bb : baseline) {
+                if (bb.period == b.period && bb.id == b.id && bb.segment == b.segment) {
+                    b.quantity = bb.quantity * factor;
+                    break;
+                }
+            }
+        }
+    };
+
+    prefillSide(m_session.market.generatorBids, m_session.marketBaseline.generatorBids);
+    prefillCon(m_session.market.consumerBids, m_session.marketBaseline.consumerBids);
+
+    // 统计实际改了多少条
+    for (const auto &c : m_session.market.consumerBids)
+        if (c.period == m_editPeriod || c.period <= 0)
             ++nCon;
-        }
-    }
-    for (auto &g : m_session.market.generatorBids) {
-        if (g.period == m_editPeriod || g.period <= 0) {
-            g.quantity *= factor;
+    for (const auto &g : m_session.market.generatorBids)
+        if (g.period == m_editPeriod || g.period <= 0)
             ++nGen;
-        }
-    }
 
     refreshImportPage();
     if (m_session.hasResult && m_session.hasData)
         rerunIfReady();
     statusBar()->showMessage(
-        QStringLiteral("已按负荷预填第 %1 时段：负荷 %2 MW / 日均 %3 MW（×%4），购电 %5 条 · 发电 %6 条申报已缩放")
+        QStringLiteral("已按负荷预填第 %1 时段：负荷 %2 MW / 日均 %3 MW → 缩放因子 ×%4，购电 %5 条 · 发电 %6 条申报已从原始基准重置并应用缩放（幂等：重复点击结果一致）")
             .arg(m_editPeriod)
             .arg(loadT, 0, 'f', 1)
             .arg(avg, 0, 'f', 1)
