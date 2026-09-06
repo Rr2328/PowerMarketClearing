@@ -135,3 +135,38 @@ target_include_directories(ClearingFacadeTest
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+
+# V1.3 数据流水线端到端集成测试（CSV → DataReader → ScenarioManager → ClearingFacade）
+# 借鉴 origin/feature/data-model 的端到端集成测试思路（陈美伊 2137534），
+# 但适配到 V1.3 长表结构（bid 不带 period 字段、按 name+id 复合主体标识）
+
+qt_add_executable(DataPipelineIntegrationTest
+    data/data_pipeline_integration_test.cpp
+    data/data_reader.cpp
+    data/data_reader.h
+    data/scenario_manager.cpp
+    data/scenario_manager.h
+    core/clearing_facade.cpp
+    core/clearing_facade.h
+    engine/clearing_engine.cpp
+    engine/clearing_engine.h
+)
+
+target_link_libraries(DataPipelineIntegrationTest
+    PRIVATE
+        Qt::Core
+)
+
+target_include_directories(DataPipelineIntegrationTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+if(MSVC)
+    target_compile_options(
+        DataPipelineIntegrationTest
+        PRIVATE
+        /utf-8
+    )
+endif()
