@@ -1258,18 +1258,24 @@ void MainWindow::refreshImportPage()
 
         m_loadingBids = true;                 // 填充期间屏蔽 itemChanged（防递归）
         table->setRowCount(0);
-        QHash<QString, int> idToRow;          // 机组/负荷编号 → 行号
+        // #92+：用 (name, id) 复合 key 做行号索引——同一机组编号跨电厂存在时（如金陵#1/龙潭#1 都是"#1机组"）
+        //      不能只用 id 撞行，必须按 (电厂名称 + 机组编号) 唯一定位
+        const auto rowKey = [](const QString &name, const QString &id) {
+            return name + QStringLiteral("\x1f") + id;   // \x1f 作分隔符（CSV 单元格里不会出现的字符）
+        };
+        QHash<QString, int> idToRow;
         int row = 0;
         for (int i = 0; i < bids.size(); ++i) {
             const auto &b = bids[i];
             if (b.period > 0 && b.period != m_editPeriod)
                 continue;
-            auto it = idToRow.find(b.id);
+            const QString key = rowKey(b.name, b.id);
+            auto it = idToRow.find(key);
             if (it == idToRow.end()) {
                 table->insertRow(row);
                 table->setItem(row, 0, lockedItem(b.name));
                 table->setItem(row, 1, lockedItem(b.id));
-                it = idToRow.insert(b.id, row);
+                it = idToRow.insert(key, row);
                 ++row;
             }
             const int r = *it;
@@ -1521,15 +1527,17 @@ void MainWindow::onPrefillByLoad()
     int nCon = 0, nGen = 0;
 
     // #92：先用 baseline 恢复当前时段的电量，再 × factor（幂等）
+    // 修复：匹配条件必须用 (name, id, period, segment) 四轴定位——
+    //       跨电厂的同机组编号（"金陵#1"/"龙潭#1" 都 id="#1机组"）只用 id 会撞主体
     auto prefillSide = [&](QVector<GeneratorBid> &side,
                            const QVector<GeneratorBid> &baseline) {
         for (int i = 0; i < side.size(); ++i) {
             auto &b = side[i];
             if (b.period > 0 && b.period != m_editPeriod)
                 continue;
-            // 从 baseline 找匹配（period+id+segment 三轴定位）
             for (const auto &bb : baseline) {
-                if (bb.period == b.period && bb.id == b.id && bb.segment == b.segment) {
+                if (bb.name == b.name && bb.id == b.id
+                    && bb.period == b.period && bb.segment == b.segment) {
                     b.quantity = bb.quantity * factor;
                     break;
                 }
@@ -1543,7 +1551,8 @@ void MainWindow::onPrefillByLoad()
             if (b.period > 0 && b.period != m_editPeriod)
                 continue;
             for (const auto &bb : baseline) {
-                if (bb.period == b.period && bb.id == b.id && bb.segment == b.segment) {
+                if (bb.name == b.name && bb.id == b.id
+                    && bb.period == b.period && bb.segment == b.segment) {
                     b.quantity = bb.quantity * factor;
                     break;
                 }
