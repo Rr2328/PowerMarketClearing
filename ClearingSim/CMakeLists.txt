@@ -34,6 +34,8 @@ qt_add_executable(ClearingSim
     core/app_session.h
     core/clearing_facade.h
     core/clearing_facade.cpp
+    core/market_view.h
+    core/market_view.cpp
 )
 
 target_include_directories(ClearingSim

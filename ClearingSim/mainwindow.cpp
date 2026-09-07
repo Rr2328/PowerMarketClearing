@@ -47,6 +47,7 @@
 #include <QtCharts/QValueAxis>
 
 #include "core/clearing_facade.h"
+#include "core/market_view.h"
 #include "data/data_reader.h"
 
 MainWindow::MainWindow(QWidget *parent)
@@ -1302,46 +1303,25 @@ void MainWindow::refreshImportPage()
         if (!m_session.hasData) {
             m_periodHint->setText(QString());
         } else {
-            double conSum = 0.0, genSum = 0.0;
-            for (const auto &c : m_session.market.consumerBids)
-                if (c.period == m_editPeriod || c.period <= 0)
-                    conSum += c.quantity;
-            for (const auto &g : m_session.market.generatorBids)
-                if (g.period == m_editPeriod || g.period <= 0)
-                    genSum += g.quantity;
-            QString loadTxt = QStringLiteral("—");
-            double loadT = 0.0;
-            for (const auto &lp : m_session.market.loadCurve) {
-                if (lp.period == m_editPeriod) {
-                    loadTxt = QStringLiteral("%1 MW").arg(lp.load, 0, 'f', 1);
-                    loadT = lp.load;
-                    break;
-                }
-            }
+            const auto sums = MarketView::periodSums(m_session.market, m_editPeriod);
+            const QString loadTxt = sums.loadFound
+                ? QStringLiteral("%1 MW").arg(sums.loadMW, 0, 'f', 1)
+                : QStringLiteral("—");
 
             // #92：当前时段相对原始基准的累计缩放因子
             //   ratio = 当前电量 / 原始基准电量（按主体累加取均值）
             //   1.0 = 未缩放，< 1 = 已缩小，> 1 = 已放大
-            QString scaleTxt = QStringLiteral("—");
-            if (!m_session.marketBaseline.generatorBids.isEmpty() && loadT > 0.0) {
-                double curSum = 0.0, baseSum = 0.0;
-                for (const auto &g : m_session.market.generatorBids)
-                    if (g.period == m_editPeriod || g.period <= 0)
-                        curSum += g.quantity;
-                for (const auto &g : m_session.marketBaseline.generatorBids)
-                    if (g.period == m_editPeriod || g.period <= 0)
-                        baseSum += g.quantity;
-                if (baseSum > 0.0) {
-                    const double ratio = curSum / baseSum;
-                    scaleTxt = QStringLiteral("×%1").arg(ratio, 0, 'f', 3);
-                }
-            }
+            const double ratio = MarketView::scaleRatio(
+                m_session.market, m_session.marketBaseline, m_editPeriod);
+            const QString scaleTxt = (ratio < 0.0)
+                ? QStringLiteral("—")
+                : QStringLiteral("×%1").arg(ratio, 0, 'f', 3);
 
             m_periodHint->setText(QStringLiteral(
                                       "第 %1 时段：购电 %2 MW · 发电 %3 MW · 负荷 %4 · 当前缩放 %5")
                                       .arg(m_editPeriod)
-                                      .arg(conSum, 0, 'f', 1)
-                                      .arg(genSum, 0, 'f', 1)
+                                      .arg(sums.conMW, 0, 'f', 1)
+                                      .arg(sums.genMW, 0, 'f', 1)
                                       .arg(loadTxt)
                                       .arg(scaleTxt));
         }
@@ -1816,36 +1796,17 @@ void MainWindow::refreshChartPage()
         if (m_clearPoint)
             m_clearPoint->clear();
 
-        struct Step { double qty; double price; };
         // 时段截面（#89：下拉选择；默认 1）。0 量段（停机申报）不画——与引擎入参口径一致
         const int chartPeriod = m_chartPeriodCombo
                                     ? m_chartPeriodCombo->currentIndex() + 1 : 1;
-        QVector<Step> gen;
-        // 供给 = 渗透率换算的 RENEW（0 价，与撮合同式）+ 该时段常规机组申报
-        const double renewCap = ClearingFacade::renewCapacityAt(
-            m_session.market, chartPeriod, m_session.renewPercent / 100.0);
-        if (renewCap > 0.0)
-            gen.append({renewCap, 0.0});
-        for (const auto &g : m_session.market.generatorBids) {
-            if (g.period > 0 && g.period != chartPeriod)
-                continue;
-            if (g.quantity <= 0.0)
-                continue;   // 0 量段不进引擎，也不画阶梯
-            gen.append({g.quantity, g.price});
-        }
-        std::sort(gen.begin(), gen.end(),
-                  [](const Step &a, const Step &b) { return a.price < b.price; });
 
-        QVector<Step> con;
-        for (const auto &c : m_session.market.consumerBids) {
-            if (c.period > 0 && c.period != chartPeriod)
-                continue;
-            if (c.quantity <= 0.0)
-                continue;
-            con.append({c.quantity, c.price});
-        }
-        std::sort(con.begin(), con.end(),
-                  [](const Step &a, const Step &b) { return a.price > b.price; });
+        // #95：阶梯入参构造下沉到 MarketView，避免 UI 层直接遍历 generatorBids/consumerBids
+        //   genSupplyCurve 已含渗透率换算的 RENEW 0 价段
+        using CurvePoint = MarketView::CurvePoint;
+        const QVector<CurvePoint> gen = MarketView::genSupplyCurve(
+            m_session.market, chartPeriod, m_session.renewPercent / 100.0);
+        const QVector<CurvePoint> con = MarketView::conDemandCurve(
+            m_session.market, chartPeriod);
 
         double cumG = 0.0, cumC = 0.0, maxPrice = 0.0;
         for (const auto &s : gen) maxPrice = std::max(maxPrice, s.price);
@@ -1856,13 +1817,13 @@ void MainWindow::refreshChartPage()
         //   下一段的起点与前一段终点自动连成竖直跳变线，形成标准阶梯图。
         for (const auto &s : gen) {
             m_supplySeries->append(cumG, s.price);
-            cumG += s.qty;
+            cumG += s.quantity;
             m_supplySeries->append(cumG, s.price);
         }
         // 需求阶梯：按报价降序，同样每段一条水平线
         for (const auto &s : con) {
             m_demandSeries->append(cumC, s.price);
-            cumC += s.qty;
+            cumC += s.quantity;
             m_demandSeries->append(cumC, s.price);
         }
         const double maxX = std::max(cumG, cumC) * 1.05;
