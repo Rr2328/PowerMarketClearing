@@ -12,6 +12,7 @@
 namespace
 {
 
+// 保存一行 CSV 数据及其行号
 struct CsvRow
 {
     int lineNumber = 0;
@@ -19,6 +20,7 @@ struct CsvRow
 };
 
 
+// 拆分 CSV 行并清理字段
 QStringList splitCsvLine(
     const QString &line)
 {
@@ -43,6 +45,7 @@ QStringList splitCsvLine(
 }
 
 
+// 判断首列是否为 index
 bool isIndexHeader(
     const QString &text)
 {
@@ -56,6 +59,7 @@ bool isIndexHeader(
 }
 
 
+// 判断字段是否匹配指定选项
 bool matchesAny(
     const QString &text,
     const QStringList &options)
@@ -72,6 +76,7 @@ bool matchesAny(
 }
 
 
+// 读取 CSV 文件的表头和数据行
 bool readCsvRows(
     const QString &filePath,
     QStringList &header,
@@ -208,6 +213,7 @@ bool readCsvRows(
 }
 
 
+// 检查发电侧表头
 bool checkGeneratorHeader(
     const QStringList &header,
     QStringList &errors)
@@ -331,6 +337,7 @@ bool checkGeneratorHeader(
 }
 
 
+// 检查用户侧表头
 bool checkConsumerHeader(
     const QStringList &header,
     QStringList &errors)
@@ -441,6 +448,7 @@ bool checkConsumerHeader(
 }
 
 
+// 检查负荷曲线表头
 bool checkLoadHeader(
     const QStringList &header,
     QStringList &errors)
@@ -498,6 +506,7 @@ bool checkLoadHeader(
 }
 
 
+// 检查新能源表头
 bool checkRenewableHeader(
     const QStringList &header,
     QStringList &errors)
@@ -596,6 +605,7 @@ bool checkRenewableHeader(
 }
 
 
+// 检查字段是否为空
 bool checkNotEmpty(
     const QString &value,
     int lineNumber,
@@ -617,6 +627,7 @@ bool checkNotEmpty(
 }
 
 
+// 解析正整数
 bool parsePositiveInt(
     const QString &text,
     int &value,
@@ -656,6 +667,7 @@ bool parsePositiveInt(
 }
 
 
+// 解析浮点数
 bool parseDouble(
     const QString &text,
     double &value,
@@ -685,6 +697,7 @@ bool parseDouble(
 }
 
 
+// 解析非负浮点数
 bool parseNonNegativeDouble(
     const QString &text,
     double &value,
@@ -717,6 +730,7 @@ bool parseNonNegativeDouble(
 }
 
 
+// 检查报价范围
 bool checkPriceRange(
     double price,
     int lineNumber,
@@ -739,6 +753,7 @@ bool checkPriceRange(
 }
 
 
+// 检查报价小数位
 bool checkPricePrecision(
     const QString &text,
     int lineNumber,
@@ -789,6 +804,7 @@ bool checkPricePrecision(
 }
 
 
+// 判断数据采用24时段还是96时段
 int detectExpectedPeriodCount(
     const QSet<int> &periods,
     const QString &name,
@@ -849,6 +865,7 @@ int detectExpectedPeriodCount(
 }
 
 
+// 检查参与者是否包含完整时段
 bool validateParticipantPeriods(
     const QHash<QString, QSet<int>>
         &periodMap,
@@ -891,6 +908,7 @@ bool validateParticipantPeriods(
 }
 
 
+// 添加文件名称前缀到错误信息
 void appendErrors(
     const QString &fileName,
     const QStringList &sourceErrors,
@@ -910,6 +928,7 @@ void appendErrors(
 }
 
 
+// 读取发电侧申报数据
 bool DataReader::readGeneratorBids(
     const QString &filePath,
     QVector<GeneratorBid> &data,
@@ -942,12 +961,16 @@ bool DataReader::readGeneratorBids(
 
     QVector<GeneratorBid> tempData;
 
+    // 记录时段和机组组合，检查重复数据
     QSet<QString> rowKeys;
+    // 记录所有出现过的时段
     QSet<int> allPeriods;
 
+    // 记录每个机组对应的时段
     QHash<QString, QSet<int>>
         unitPeriods;
 
+    // 记录机组类型
     QHash<QString, QString>
         unitTypes;
 
@@ -1331,6 +1354,7 @@ bool DataReader::readGeneratorBids(
 }
 
 
+// 读取用户侧申报数据
 bool DataReader::readConsumerBids(
     const QString &filePath,
     QVector<ConsumerBid> &data,
@@ -1366,6 +1390,7 @@ bool DataReader::readConsumerBids(
     QSet<QString> rowKeys;
     QSet<int> allPeriods;
 
+    // 记录每个用户对应的时段
     QHash<QString, QSet<int>>
         consumerPeriods;
 
@@ -1705,6 +1730,7 @@ bool DataReader::readConsumerBids(
 }
 
 
+// 读取系统负荷曲线
 bool DataReader::readLoadCurve(
     const QString &filePath,
     QVector<LoadPoint> &data,
@@ -1855,6 +1881,7 @@ bool DataReader::readLoadCurve(
 }
 
 
+// 读取新能源出力数据
 bool DataReader::readRenewableOutput(
     const QString &filePath,
     QVector<RenewableOutput> &data,
@@ -1885,12 +1912,16 @@ bool DataReader::readRenewableOutput(
     QVector<RenewableOutput>
         tempData;
 
+    // 记录机组和时段组合，检查重复数据
     QSet<QString> keys;
+    // 记录所有出现过的时段
     QSet<int> allPeriods;
 
+    // 记录每个新能源机组对应的时段
     QHash<QString, QSet<int>>
         generatorPeriods;
 
+    // 记录新能源机组类型
     QHash<QString, QString>
         generatorTypes;
 
@@ -2082,6 +2113,7 @@ bool DataReader::readRenewableOutput(
 }
 
 
+// 读取全部市场数据
 bool DataReader::readAll(
     const DataFileSet &files,
     MarketData &data,
@@ -2184,6 +2216,7 @@ bool DataReader::readAll(
 }
 
 
+// 检查各类市场数据之间的关联关系
 bool DataReader::validateRelations(
     const MarketData &data,
     QStringList &errors)

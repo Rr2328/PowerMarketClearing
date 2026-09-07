@@ -10,9 +10,12 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 
+// DataReader V1.4 单元测试：校验真实数据读取、各类异常识别与跨文件关系校验。
+
 namespace
 {
 
+// 自可执行文件目录上溯查找项目根目录。
 QString findProjectRoot()
 {
     QDir dir(
@@ -40,6 +43,7 @@ QString findProjectRoot()
 }
 
 
+// 由项目根目录再上溯一层得到仓库根目录。
 QString findRepositoryRoot(
     const QString &projectRoot)
 {
@@ -60,6 +64,7 @@ QString findRepositoryRoot(
 }
 
 
+// 拼接 demo 场景数据目录路径。
 QString scenarioDirectory(
     const QString &repositoryRoot)
 {
@@ -70,6 +75,7 @@ QString scenarioDirectory(
 }
 
 
+// 真实场景数据文件名清单（4 类 × 24/96 时段）。
 QStringList scenarioFileNames()
 {
     return
@@ -87,6 +93,7 @@ QStringList scenarioFileNames()
 }
 
 
+// 统计目录中存在的场景文件数。
 int countScenarioFiles(
     const QString &directory)
 {
@@ -108,6 +115,7 @@ int countScenarioFiles(
 }
 
 
+// 按时段数生成一组四文件路径。
 DataFileSet makeFileSet(
     const QString &directory,
     int periodCount)
@@ -151,6 +159,7 @@ DataFileSet makeFileSet(
 }
 
 
+// 以 UTF-8 写入文本内容到文件。
 bool writeTextFile(
     const QString &filePath,
     const QString &content)
@@ -177,6 +186,7 @@ bool writeTextFile(
 }
 
 
+// 按步长换算时段对应时刻。
 QString makeTime(
     int period,
     int periodCount)
@@ -213,6 +223,7 @@ QString makeTime(
 }
 
 
+// 发电侧宽表表头。
 QStringList generatorHeader()
 {
     QStringList header;
@@ -240,6 +251,7 @@ QStringList generatorHeader()
 }
 
 
+// 用户侧宽表表头。
 QStringList consumerHeader()
 {
     QStringList header;
@@ -266,6 +278,7 @@ QStringList consumerHeader()
 }
 
 
+// 系统负荷表表头。
 QStringList loadHeader()
 {
     return
@@ -277,6 +290,7 @@ QStringList loadHeader()
 }
 
 
+// 新能源出力表表头。
 QStringList renewableHeader()
 {
     return
@@ -291,6 +305,7 @@ QStringList renewableHeader()
 }
 
 
+// 生成一行发电侧申报记录。
 QString makeGeneratorRow(
     int period,
     const QString &id,
@@ -332,6 +347,7 @@ QString makeGeneratorRow(
 }
 
 
+// 生成一行用户侧申报记录。
 QString makeConsumerRow(
     int period,
     const QString &id,
@@ -371,6 +387,7 @@ QString makeConsumerRow(
 }
 
 
+// 生成一行系统负荷记录。
 QString makeLoadRow(
     int period,
     int periodCount,
@@ -390,6 +407,7 @@ QString makeLoadRow(
 }
 
 
+// 生成一行新能源出力记录。
 QString makeRenewableRow(
     int period,
     int periodCount,
@@ -416,6 +434,7 @@ QString makeRenewableRow(
 }
 
 
+// 表头与数据行拼装为 CSV 文本。
 QString makeCsv(
     const QStringList &header,
     const QStringList &rows)
@@ -436,6 +455,7 @@ QString makeCsv(
 }
 
 
+// 构造发电侧 CSV（光伏模式前 6 时段出力为 0）。
 QString makeGeneratorCsv(
     int periodCount,
     const QString &type =
@@ -479,6 +499,7 @@ QString makeGeneratorCsv(
 }
 
 
+// 构造用户侧 CSV（两段递减报价）。
 QString makeConsumerCsv(
     int periodCount)
 {
@@ -510,6 +531,7 @@ QString makeConsumerCsv(
 }
 
 
+// 判断错误列表是否含指定关键字。
 bool containsError(
     const QStringList &errors,
     const QString &keyword)
@@ -528,6 +550,7 @@ bool containsError(
 }
 
 
+// 输出错误明细。
 void printErrors(
     const QStringList &errors)
 {
@@ -542,6 +565,7 @@ void printErrors(
 }
 
 
+// 断言并统计失败数。
 void check(
     bool condition,
     const QString &testName,
@@ -571,6 +595,7 @@ void check(
 }
 
 
+// 判断是否包含指定时段的发电申报。
 bool containsPeriod(
     const QVector<GeneratorBid> &data,
     int period)
@@ -589,6 +614,7 @@ bool containsPeriod(
 }
 
 
+// 统计指定时段机组的报价段数。
 int countSegments(
     const QVector<GeneratorBid> &data,
     int period,
@@ -612,6 +638,7 @@ int countSegments(
 }
 
 
+// 构造一份 24 时段合法市场数据。
 MarketData makeValidMarketData24()
 {
     MarketData data;
@@ -747,6 +774,7 @@ int main(
         argc,
         argv);
 
+    // 失败用例计数。
     int failedTests = 0;
 
     qInfo()
@@ -754,6 +782,7 @@ int main(
         << "========== DataReader V1.4 Test ==========";
 
 
+    // 定位项目根目录。
     const QString projectRoot =
         findProjectRoot();
 
@@ -774,6 +803,7 @@ int main(
                projectRoot);
 
 
+    // 定位仓库根目录。
     const QString repositoryRoot =
         findRepositoryRoot(
             projectRoot);
@@ -790,6 +820,7 @@ int main(
                repositoryRoot);
 
 
+    // 定位场景数据目录。
     const QString directory =
         scenarioDirectory(
             repositoryRoot);
@@ -806,6 +837,7 @@ int main(
                directory);
 
 
+    // 校验 8 个场景 CSV 是否齐全。
     const int fileCount =
         countScenarioFiles(
             directory);
@@ -898,6 +930,7 @@ int main(
     }
 
 
+    // 后续异常用例在临时目录中构造 CSV。
     QTemporaryDir tempDir;
 
     check(
@@ -2151,6 +2184,7 @@ int main(
     }
 
 
+    // 输出汇总，失败数决定退出码。
     qInfo()
             .noquote()
         << "========================================";

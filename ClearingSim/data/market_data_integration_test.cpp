@@ -7,12 +7,16 @@
 #include <QFileInfo>
 #include <QSet>
 
+// MarketData 集成测试 V1.3：校验 CSV → MarketData → PeriodScenario 全链路数据流转。
+
 namespace
 {
 
+// 失败用例计数（全局变量，由 check 累加）。
 int failedTests = 0;
 
 
+// 断言并打印结果，失败时累加失败数。
 void check(
     bool condition,
     const QString &testName)
@@ -34,6 +38,7 @@ void check(
 }
 
 
+// 自指定路径上溯查找仓库根目录。
 QString searchRepoRoot(
     const QString &startPath)
 {
@@ -58,6 +63,7 @@ QString searchRepoRoot(
 }
 
 
+// 依次从程序目录、工作目录、源码目录尝试定位仓库根目录。
 QString findRepoRoot()
 {
     QString root =
@@ -87,6 +93,7 @@ QString findRepoRoot()
 }
 
 
+// 按时段数生成一组四文件路径。
 DataFileSet makeFileSet(
     const QString &scenarioDir,
     int periodCount)
@@ -129,6 +136,7 @@ DataFileSet makeFileSet(
 }
 
 
+// 输出错误明细。
 void printErrors(
     const QStringList &errors)
 {
@@ -142,6 +150,7 @@ void printErrors(
 }
 
 
+// 提取发电侧机组 ID 集合。
 QSet<QString> generatorIds(
     const QVector<GeneratorBid> &data)
 {
@@ -158,6 +167,7 @@ QSet<QString> generatorIds(
 }
 
 
+// 提取用户侧用户 ID 集合。
 QSet<QString> consumerIds(
     const QVector<ConsumerBid> &data)
 {
@@ -174,6 +184,7 @@ QSet<QString> consumerIds(
 }
 
 
+// 提取新能源机组 ID 集合。
 QSet<QString> renewableIds(
     const QVector<RenewableOutput> &data)
 {
@@ -190,6 +201,7 @@ QSet<QString> renewableIds(
 }
 
 
+// 统计指定时段的发电申报条数。
 int countGeneratorBids(
     const MarketData &data,
     int period)
@@ -210,6 +222,7 @@ int countGeneratorBids(
 }
 
 
+// 统计指定时段的用户申报条数。
 int countConsumerBids(
     const MarketData &data,
     int period)
@@ -230,6 +243,7 @@ int countConsumerBids(
 }
 
 
+// 校验单时段场景的申报数量与 MarketData 中该时段一致。
 bool scenarioMatchesMarketData(
     const PeriodScenario &scenario,
     const MarketData &data)
@@ -246,6 +260,7 @@ bool scenarioMatchesMarketData(
 }
 
 
+// 跑通「CSV → MarketData → PeriodScenario」完整链路测试。
 bool runPipelineTest(
     const QString &scenarioDir,
     int periodCount,
@@ -396,6 +411,7 @@ bool runPipelineTest(
     }
 
 
+    // 校验 MarketData 可完整拷贝。
     MarketData copiedData =
         data;
 
@@ -431,6 +447,7 @@ int main(
         << "========== MarketData Integration V1.3 Test ==========";
 
 
+    // 定位仓库根目录，失败则直接终止。
     const QString repoRoot =
         findRepoRoot();
 
@@ -449,6 +466,7 @@ int main(
                repoRoot);
 
 
+    // 定位 scenario 场景数据目录，不存在则终止。
     const QString scenarioDir =
         QDir(repoRoot)
             .filePath(
@@ -464,6 +482,7 @@ int main(
     }
 
 
+    // 24 时段链路测试。
     runPipelineTest(
         scenarioDir,
         24,
@@ -471,6 +490,7 @@ int main(
         Hourly24);
 
 
+    // 96 时段链路测试。
     runPipelineTest(
         scenarioDir,
         96,
@@ -478,6 +498,7 @@ int main(
         QuarterHourly96);
 
 
+    // 输出汇总，失败数决定退出码。
     qInfo().noquote()
         << "===============================================";
 

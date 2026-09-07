@@ -8,6 +8,7 @@
 namespace
 {
 
+// 获取对应时段数量
 int periodCountFromGranularity(
     TimeGranularity granularity)
 {
@@ -24,6 +25,7 @@ int periodCountFromGranularity(
 }
 
 
+// 获取每个时段的小时数
 double intervalHoursFromGranularity(
     TimeGranularity granularity)
 {
@@ -40,6 +42,7 @@ double intervalHoursFromGranularity(
 }
 
 
+// 检查负荷曲线时段
 bool checkLoadPeriods(
     const QVector<LoadPoint> &loadCurve,
     int expectedCount,
@@ -109,6 +112,7 @@ bool checkLoadPeriods(
 }
 
 
+// 检查申报数据时段
 bool checkBidPeriods(
     const MarketData &data,
     int expectedCount,
@@ -168,6 +172,7 @@ bool checkBidPeriods(
 } // namespace
 
 
+// 将96时段负荷聚合为24时段
 bool ScenarioManager::aggregateLoadTo24(
     const QVector<LoadPoint> &load96,
     QVector<LoadPoint> &load24,
@@ -186,6 +191,7 @@ bool ScenarioManager::aggregateLoadTo24(
         return false;
     }
 
+    // 按时段保存负荷数据
     QHash<int, LoadPoint> loadMap;
 
     for (const LoadPoint &point :
@@ -241,6 +247,7 @@ bool ScenarioManager::aggregateLoadTo24(
         const int firstPeriod =
             (hour - 1) * 4 + 1;
 
+        // 计算4个15分钟时段的平均负荷
         double totalLoad = 0.0;
 
         for (int offset = 0;
@@ -280,6 +287,7 @@ bool ScenarioManager::aggregateLoadTo24(
 }
 
 
+// 将96时段新能源出力聚合为24时段
 bool ScenarioManager::aggregateRenewableTo24(
     const QVector<RenewableOutput> &renewable96,
     QVector<RenewableOutput> &renewable24,
@@ -296,11 +304,14 @@ bool ScenarioManager::aggregateRenewableTo24(
         return false;
     }
 
+    // 保存新能源机组编号
     QSet<QString> generatorIds;
 
+    // 保存新能源机组类型
     QHash<QString, QString>
         generatorTypes;
 
+    // 按机组和时段保存出力
     QHash<QString, RenewableOutput>
         outputMap;
 
@@ -413,6 +424,7 @@ bool ScenarioManager::aggregateRenewableTo24(
         for (const QString &generatorId :
              sortedIds)
         {
+            // 计算4个时段的平均出力
             double totalOutput = 0.0;
 
             for (int offset = 0;
@@ -458,6 +470,7 @@ bool ScenarioManager::aggregateRenewableTo24(
 }
 
 
+// 构建各时段的市场场景
 bool ScenarioManager::buildPeriodScenarios(
     const MarketData &data,
     TimeGranularity granularity,
@@ -467,10 +480,12 @@ bool ScenarioManager::buildPeriodScenarios(
     scenarios.clear();
     errors.clear();
 
+    // 获取当前模式的时段数量
     const int expectedCount =
         periodCountFromGranularity(
             granularity);
 
+    // 获取当前模式的时段长度
     const double intervalHours =
         intervalHoursFromGranularity(
             granularity);
@@ -534,15 +549,19 @@ bool ScenarioManager::buildPeriodScenarios(
     }
 
 
+    // 按时段保存负荷数据
     QHash<int, LoadPoint>
         loadMap;
 
+    // 按时段保存发电侧申报
     QHash<int, QVector<GeneratorBid>>
         generatorBidMap;
 
+    // 按时段保存用户侧申报
     QHash<int, QVector<ConsumerBid>>
         consumerBidMap;
 
+    // 按时段保存新能源出力
     QHash<int, QVector<RenewableOutput>>
         renewableMap;
 
@@ -640,6 +659,7 @@ bool ScenarioManager::buildPeriodScenarios(
         }
 
 
+        // 组装当前时段场景
         PeriodScenario scenario;
 
         scenario.period =

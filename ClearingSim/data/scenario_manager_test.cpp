@@ -9,12 +9,16 @@
 
 #include <cmath>
 
+// ScenarioManager V1.4 单元测试：校验时段场景构建与 96→24 聚合
+
 namespace
 {
 
+// 失败用例计数
 int failedTests = 0;
 
 
+// 断言并打印结果，失败时累加失败数
 void check(
     bool condition,
     const QString &testName)
@@ -36,6 +40,7 @@ void check(
 }
 
 
+// 自指定路径上溯查找仓库根目录
 QString searchRepoRoot(
     const QString &startPath)
 {
@@ -60,6 +65,7 @@ QString searchRepoRoot(
 }
 
 
+// 依次从程序目录、工作目录、源码目录尝试定位仓库根目录
 QString findRepoRoot()
 {
     QString root =
@@ -89,6 +95,7 @@ QString findRepoRoot()
 }
 
 
+// 按时段数生成一组四文件路径
 DataFileSet makeFileSet(
     const QString &scenarioDir,
     int periodCount)
@@ -131,6 +138,7 @@ DataFileSet makeFileSet(
 }
 
 
+// 输出错误明细
 void printErrors(
     const QStringList &errors)
 {
@@ -143,6 +151,7 @@ void printErrors(
 }
 
 
+// 按机组 ID 与时段查找新能源出力记录
 bool findRenewable(
     const QVector<RenewableOutput> &data,
     const QString &generatorId,
@@ -165,6 +174,7 @@ bool findRenewable(
 }
 
 
+// 提取新能源机组 ID 集合
 QSet<QString> renewableIds(
     const QVector<RenewableOutput> &data)
 {
@@ -180,6 +190,7 @@ QSet<QString> renewableIds(
 }
 
 
+// 统计指定时段的发电申报条数
 int countGeneratorBids(
     const QVector<GeneratorBid> &data,
     int period)
@@ -198,6 +209,7 @@ int countGeneratorBids(
 }
 
 
+// 统计指定时段的用户申报条数
 int countConsumerBids(
     const QVector<ConsumerBid> &data,
     int period)
@@ -216,6 +228,7 @@ int countConsumerBids(
 }
 
 
+// 统计指定时段的新能源出力条数
 int countRenewables(
     const QVector<RenewableOutput> &data,
     int period)
@@ -234,6 +247,7 @@ int countRenewables(
 }
 
 
+// 校验场景中的发电申报全部属于本时段
 bool allGeneratorBidsBelongToPeriod(
     const PeriodScenario &scenario)
 {
@@ -256,6 +270,7 @@ bool allGeneratorBidsBelongToPeriod(
 }
 
 
+// 校验场景中的购电申报全部属于本时段
 bool allConsumerBidsBelongToPeriod(
     const PeriodScenario &scenario)
 {
@@ -278,6 +293,7 @@ bool allConsumerBidsBelongToPeriod(
 }
 
 
+// 校验场景中的新能源数据全部属于本时段
 bool allRenewablesBelongToPeriod(
     const PeriodScenario &scenario)
 {
@@ -295,6 +311,7 @@ bool allRenewablesBelongToPeriod(
 }
 
 
+// 比较两条发电申报的关键字段是否一致
 bool sameGeneratorBid(
     const GeneratorBid &a,
     const GeneratorBid &b)
@@ -316,6 +333,7 @@ bool sameGeneratorBid(
 }
 
 
+// 比较两条购电申报的关键字段是否一致
 bool sameConsumerBid(
     const ConsumerBid &a,
     const ConsumerBid &b)
@@ -336,6 +354,7 @@ bool sameConsumerBid(
 }
 
 
+// 判断发电申报集合中是否包含目标申报
 bool containsGeneratorBid(
     const QVector<GeneratorBid> &data,
     const GeneratorBid &target)
@@ -354,6 +373,7 @@ bool containsGeneratorBid(
 }
 
 
+// 判断购电申报集合中是否包含目标申报
 bool containsConsumerBid(
     const QVector<ConsumerBid> &data,
     const ConsumerBid &target)
@@ -386,6 +406,7 @@ int main(
         << "========== ScenarioManager V1.4 Test ==========";
 
 
+    // 定位仓库根目录，失败则直接终止
     const QString repoRoot =
         findRepoRoot();
 
@@ -404,6 +425,7 @@ int main(
                repoRoot);
 
 
+    // 定位 scenario 场景数据目录，不存在则终止
     const QString scenarioDir =
         QDir(repoRoot)
             .filePath(
@@ -848,6 +870,7 @@ int main(
     }
 
 
+    // 异常用例复用的场景输出容器
     QVector<PeriodScenario>
         invalidScenarios;
 
@@ -1210,6 +1233,7 @@ int main(
         "96→24 新能源聚合识别机组类型不一致");
 
 
+    // 输出汇总，失败数决定退出码
     qInfo().noquote()
         << "==========================================";
 
