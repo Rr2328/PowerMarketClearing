@@ -198,7 +198,7 @@ B 的算法与 C 的界面（曲线预览）都必须按此式计算——**两�
 
 > 前六章约定**输入**，本章约定**输出**——C 的界面只消费本章结构，B 的真实引擎必须按本章结构产出。**结构冻结后 B、C 各自独立开发，联调时零改动对接。**
 
-### 7.1 三个结构（C 已按此实现，见 `ClearingSim/core/fake_engine.h`）
+### 7.1 三个结构（C 已按此实现，见 `ClearingSim/core/clearing_facade.h`）
 
 **① `EntityCleared`——单个主体在某时段的成交明细（三视角过滤的核心数据源）**
 
@@ -242,7 +242,12 @@ B 的算法与 C 的界面（曲线预览）都必须按此式计算——**两�
 
 ### 7.3 B 位对接约定
 
-1. **接口形态**：`FakeEngine` 提供两个静态入口 `clearBenchmark(market, mode)` 与 `clearPeriods(scenarios, market, mode)`（详见 `core/fake_engine.h`）。V1.3 引擎的 `clearPeriods` 改为**逐 period 取长表 period=t 行 + 渗透率出力**撮合，签名变化属 #67 实施细节，另行登记；结构体不变，C 的界面与三视角过滤零改动。
+1. **接口形态**：`ClearingFacade` 提供三个静态入口：
+   - `clearBenchmark(market, mode)` —— 单时段基准出清（窄表基准例对拍用）
+   - `clearPeriods(market, periodCount, penetration, mode)` —— 连续出清；`periodCount=96` 走原生 15 分钟粒度，`=24` 按 §7.2 聚合为小时视图；V1.3 起 **96 期恒跑**（#88），不再走场景列表
+   - `renewCapacityAt(market, period, penetration)` —— 时段 t 的新能源出力 = `penetration × 负荷(t)`，缺曲线时回退 `totalDemandAt`
+
+   详见 `ClearingSim/core/clearing_facade.h`。结构体不变，C 的界面与三视角过滤零改动。
 2. **MCP 口径**：全场统一按边际段报价 `clearingPrice` 结算；`genDetails`/`conDetails` 的 `money = clearingPrice × clearedMW`。
 3. **PAB 口径**：各段按自身报价结算；`money = bidPrice × clearedMW`；出清价本身不受影响。
 4. **对拍锚点**：窄表基准例导入展开后逐时段结果与旧引擎一致（见第六章）。
