@@ -172,3 +172,30 @@ if(MSVC)
         /utf-8
     )
 endif()
+
+
+# CTest 接入（#97）
+#   此前 4 个测试 target 用 qt_add_executable 注册但未挂 CTest，
+#   导致 ctest / IDE Test Explorer 拿不到；这里 enable_testing + add_test 接上
+#   标准测试框架。
+#
+# Windows 下 Qt 测试程序须在 PATH 含 Qt DLL 才能独立启动——CI 上需要 windeployqt
+#   拷贝，或在 add_test 里设 ENVIRONMENT 把 Qt bin 加进去。这里开发期主要靠
+#   PATH 前置 + QT_FORCE_STDERR_LOGGING=1 环境变量。
+
+enable_testing()
+
+add_test(NAME DataReaderTest          COMMAND DataReaderTest)
+add_test(NAME ScenarioManagerTest     COMMAND ScenarioManagerTest)
+add_test(NAME ClearingFacadeTest      COMMAND ClearingFacadeTest)
+add_test(NAME DataPipelineIntegrationTest COMMAND DataPipelineIntegrationTest)
+
+# 让 Windows 控制台输出也走 stderr（IDE/Test Explorer 看得到）
+set_tests_properties(
+    DataReaderTest
+    ScenarioManagerTest
+    ClearingFacadeTest
+    DataPipelineIntegrationTest
+    PROPERTIES
+    ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1"
+)
