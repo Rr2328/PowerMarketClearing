@@ -1,6 +1,7 @@
 #ifndef MARKET_RUNNER_H
 #define MARKET_RUNNER_H
 #include"clearing_engine.h"
+#include"renewable_manager.h"
 #include<QString>
 #include<QVector>
 struct TimeMarketData
@@ -11,6 +12,7 @@ struct TimeMarketData
     double loadMW = 0.0;
     QVector<Generator>generators;
     QVector<Consumer>consumers;
+    QVector<RenewableBase>renewbaleBase;
 };
 struct PeriodResult
 {
@@ -23,5 +25,5 @@ struct DayResult
     QVector<PeriodResult>result;
 };
 
-DayResult runmarket(QVector<TimeMarketData>daydata,SettlementMode mode);
+DayResult runmarket(QVector<TimeMarketData>daydata,SettlementMode mode,double penetration);
 #endif // MARKET_RUNNER_H

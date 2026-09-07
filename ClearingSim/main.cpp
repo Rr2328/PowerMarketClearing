@@ -11,14 +11,17 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     QVector<TimeMarketData> daydata;
     DataReader datareader;
-    daydata=datareader.readMarketData("generator_bids_24period.csv","consumer_bids_24period.csv");
+    daydata=datareader.readMarketData("generator_bids_24period.csv","consumer_bids_24period.csv","renewable_output_24period.csv","load_curve_24period.csv");
     SettlementMode mode=SettlementMode::MCP;
-    DayResult dayresult=runmarket(daydata,mode);
+    double penetration=0.3;
+    DayResult dayresult=runmarket(daydata,mode,penetration);
     for(auto& result:dayresult.result)
     {
         qDebug()<<"————————————第"<<result.period<<"时段出清测试结果——————————";
         qDebug()<<"出清价格："<<result.result.clearingprice;
         qDebug()<<"成交总电量："<<result.result.totalvolume;
+        qDebug()<<"渗透率为："<<penetration;
+        qDebug()<<"当前时间为："<<daydata[result.period-1].time<<"当前负荷为："<<daydata[result.period-1].loadMW;
         qDebug()<<"出清过程如下：";
         for (auto& trade:result.result.trade) {
             qDebug()<<trade.generatorID<<"("<<trade.generatorseg<<"):"

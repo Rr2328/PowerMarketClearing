@@ -17,6 +17,8 @@ qt_add_executable(ClearingSim
     market_runner.cpp
     data_reader.h
     data_reader.cpp
+    renewable_manager.h
+    renewable_manager.cpp
 
 
 
