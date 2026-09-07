@@ -793,6 +793,108 @@ int main(
     }
 
 
+    // #98：窄表 × 长表等价性回归测试
+    //   同一份基准数据（1 主体 × 2 段，固定量价）写成窄表与长表两份 CSV，
+    //   分别读入后比对逐 period × segment 的 quantity / price —— 必须完全一致。
+    //   覆盖 #96 抽出的 expandParsedBidsTo96Periods / materializeToGeneratorBids
+    //   / materializeToConsumerBids 三 helper。
+    if (tempDir.isValid())
+    {
+        // ---- 基准数据：1 主体 × 2 段 × 96 期同量同价 ----
+        struct BidSpec {
+            QString name; QString id;
+            int segment;
+            double quantity;
+            double price;
+        };
+        const QVector<BidSpec> specs = {
+            {QStringLiteral("测试电厂A"), QStringLiteral("#1机组"), 1, 80.0, 180.0},
+            {QStringLiteral("测试电厂A"), QStringLiteral("#1机组"), 2, 40.0, 220.0},
+        };
+
+        // ---- 写窄表 CSV（每段一行，无 period）----
+        QString narrowCsv = QStringLiteral(
+            "机组ID,机组名称,申报段,申报电价(元/MWh),申报电量(MWh)\n");
+        for (const auto &s : specs) {
+            narrowCsv += QStringLiteral("%1,%2,%3,%4,%5\n")
+                .arg(s.id, s.name)
+                .arg(s.segment)
+                .arg(s.price, 0, 'f', 3)
+                .arg(s.quantity, 0, 'f', 1);
+        }
+        const QString narrowFile = tempDir.path() + QStringLiteral("/narrow.csv");
+        check(writeTextFile(narrowFile, narrowCsv),
+              "写入窄表临时 CSV");
+
+        // ---- 写长表 CSV（96 期 × 同一份基准数据）----
+        QString longCsv = QStringLiteral(
+            "period,电厂名称,机组编号,第1段出力(MW),第1段报价(元/MWh),第2段出力(MW),第2段报价(元/MWh)\n");
+        for (int p = 1; p <= 96; ++p) {
+            // 段 1
+            longCsv += QStringLiteral("%1,%2,%3,%4,%5,")
+                .arg(p).arg(specs[0].name, specs[0].id)
+                .arg(specs[0].quantity, 0, 'f', 1)
+                .arg(specs[0].price, 0, 'f', 3);
+            // 段 2（最后一个无尾随逗）
+            longCsv += QStringLiteral("%1,%2\n")
+                .arg(specs[1].quantity, 0, 'f', 1)
+                .arg(specs[1].price, 0, 'f', 3);
+        }
+        const QString longFile = tempDir.path() + QStringLiteral("/long.csv");
+        check(writeTextFile(longFile, longCsv),
+              "写入长表临时 CSV");
+
+        // ---- 读入两边 ----
+        QStringList errsN, errsL;
+        QVector<GeneratorBid> narrowBids, longBids;
+        const bool okN = DataReader::readGeneratorBids(narrowFile, narrowBids, errsN);
+        if (!okN)
+            qInfo().noquote() << "[DBG] errsN =" << errsN;
+        const bool okL = DataReader::readGeneratorBids(longFile, longBids, errsL);
+        if (!okL)
+            qInfo().noquote() << "[DBG] errsL =" << errsL;
+        check(okN, "窄表读入成功");
+        check(okL, "长表读入成功");
+
+        // ---- 比对：窄表展开后应有 1 主体 × 2 段 × 96 期 = 192 行 ----
+        check(narrowBids.size() == 192,
+              QStringLiteral("窄表展开 192 行（实际 = %1）").arg(narrowBids.size()));
+        check(longBids.size() == 192,
+              QStringLiteral("长表 192 行（实际 = %1）").arg(longBids.size()));
+
+        // ---- 比对：按 (period, segment) 排序后逐行 (period/name/id/qty/price) 一致 ----
+        // 窄表按"段展开 96 期"顺序存；长表按"逐 period × 段"展开；
+        // 两者底层有序但不一致，统一按 (period, segment) 排序后逐项比较。
+        auto cmp = [](const GeneratorBid &a, const GeneratorBid &b) {
+            if (a.period != b.period) return a.period < b.period;
+            return a.segment < b.segment;
+        };
+        QVector<GeneratorBid> sortedN = narrowBids;
+        QVector<GeneratorBid> sortedL = longBids;
+        std::sort(sortedN.begin(), sortedN.end(), cmp);
+        std::sort(sortedL.begin(), sortedL.end(), cmp);
+
+        bool allMatch = (sortedN.size() == sortedL.size());
+        for (int i = 0; allMatch && i < sortedN.size(); ++i) {
+            const auto &n = sortedN[i];
+            const auto &l = sortedL[i];
+            if (n.period != l.period || n.segment != l.segment
+                || n.name != l.name || n.id != l.id
+                || qAbs(n.quantity - l.quantity) > 1e-6
+                || qAbs(n.price - l.price) > 1e-6) {
+                allMatch = false;
+                qInfo().noquote()
+                    << QStringLiteral("[DBG] diff @%1: narrow=(p=%2,s=%3,n=%4,id=%5,q=%6,price=%7) vs long=(p=%8,s=%9,n=%10,id=%11,q=%12,price=%13)")
+                        .arg(i).arg(n.period).arg(n.segment).arg(n.name).arg(n.id)
+                        .arg(n.quantity, 0, 'f', 4).arg(n.price, 0, 'f', 4)
+                        .arg(l.period).arg(l.segment).arg(l.name).arg(l.id)
+                        .arg(l.quantity, 0, 'f', 4).arg(l.price, 0, 'f', 4);
+            }
+        }
+        check(allMatch, "窄表 × 长表（排序后）逐行 (period/segment/name/id/qty/price) 一致");
+    }
+
+
     qInfo().noquote()
         << "========================================";
 

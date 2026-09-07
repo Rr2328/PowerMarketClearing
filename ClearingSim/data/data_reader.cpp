@@ -659,6 +659,60 @@ struct LongTableConfig
     bool priceMonotonicUp;  // 发电：段价单调不减；购电：单调不增
 };
 
+// #96：长/窄表展开共享 helper（消除 readGeneratorBids / readConsumerBids 重复）
+//   窄表解析无 period 字段，需要展开为 96 期同量同价（作对拍锚点）；
+//   长表已带 period 字段，调用本函数是 no-op（period != 0 不展开）。
+void expandParsedBidsTo96Periods(QVector<ParsedBid> &bids)
+{
+    QVector<ParsedBid> expanded;
+    for (const ParsedBid &bid : bids) {
+        if (bid.period > 0) {
+            expanded.push_back(bid);   // 长表自带 period，不复制
+            continue;
+        }
+        for (int period = 1; period <= 96; ++period) {
+            ParsedBid item = bid;
+            item.period = period;
+            expanded.push_back(item);
+        }
+    }
+    bids = std::move(expanded);
+}
+
+// #96：ParsedBid → GeneratorBid 转换（共享）
+void materializeToGeneratorBids(
+    const QVector<ParsedBid> &parsed, QVector<GeneratorBid> &out)
+{
+    out.reserve(out.size() + parsed.size());
+    for (const ParsedBid &bid : parsed) {
+        GeneratorBid item;
+        item.id = bid.id;
+        item.name = bid.name;
+        item.period = bid.period;
+        item.segment = bid.segment;
+        item.price = bid.price;
+        item.quantity = bid.quantity;
+        out.push_back(item);
+    }
+}
+
+// #96：ParsedBid → ConsumerBid 转换（共享）
+void materializeToConsumerBids(
+    const QVector<ParsedBid> &parsed, QVector<ConsumerBid> &out)
+{
+    out.reserve(out.size() + parsed.size());
+    for (const ParsedBid &bid : parsed) {
+        ConsumerBid item;
+        item.id = bid.id;
+        item.name = bid.name;
+        item.period = bid.period;
+        item.segment = bid.segment;
+        item.price = bid.price;
+        item.quantity = bid.quantity;
+        out.push_back(item);
+    }
+}
+
 // 识别长表表头并校验成对列结构
 //   返回段对数（1~5）；不是长表返回 0；是长表意图但结构错误返回 -1
 int parseLongHeader(
@@ -1372,46 +1426,14 @@ bool DataReader::readGeneratorBids(
         }
 
         // ---- 窄表展开：96 个时段同量同价（等价性对拍锚点） ----
-        QVector<ParsedBid> expanded;
-
-        expanded.reserve(
-            parsed.size() * 96);
-
-        for (const ParsedBid &bid : parsed)
-        {
-            for (int period = 1;
-                 period <= 96;
-                 ++period)
-            {
-                ParsedBid item = bid;
-                item.period = period;
-
-                expanded.push_back(item);
-            }
-        }
-
-        parsed = expanded;
+        expandParsedBidsTo96Periods(parsed);
     }
     else
     {
         return false;
     }
 
-    data.reserve(parsed.size());
-
-    for (const ParsedBid &bid : parsed)
-    {
-        GeneratorBid item;
-        item.id = bid.id;
-        item.name = bid.name;
-        item.period = bid.period;
-        item.segment = bid.segment;
-        item.price = bid.price;
-        item.quantity = bid.quantity;
-
-        data.push_back(item);
-    }
-
+    materializeToGeneratorBids(parsed, data);
     return true;
 }
 
@@ -1518,46 +1540,14 @@ bool DataReader::readConsumerBids(
         }
 
         // ---- 窄表展开：96 个时段同量同价 ----
-        QVector<ParsedBid> expanded;
-
-        expanded.reserve(
-            parsed.size() * 96);
-
-        for (const ParsedBid &bid : parsed)
-        {
-            for (int period = 1;
-                 period <= 96;
-                 ++period)
-            {
-                ParsedBid item = bid;
-                item.period = period;
-
-                expanded.push_back(item);
-            }
-        }
-
-        parsed = expanded;
+        expandParsedBidsTo96Periods(parsed);
     }
     else
     {
         return false;
     }
 
-    data.reserve(parsed.size());
-
-    for (const ParsedBid &bid : parsed)
-    {
-        ConsumerBid item;
-        item.id = bid.id;
-        item.name = bid.name;
-        item.period = bid.period;
-        item.segment = bid.segment;
-        item.price = bid.price;
-        item.quantity = bid.quantity;
-
-        data.push_back(item);
-    }
-
+    materializeToConsumerBids(parsed, data);
     return true;
 }
 
