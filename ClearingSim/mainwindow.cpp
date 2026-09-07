@@ -48,7 +48,6 @@
 
 #include "core/clearing_facade.h"
 #include "data/data_reader.h"
-#include "data/scenario_manager.h"
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)

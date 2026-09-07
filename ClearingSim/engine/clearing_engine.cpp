@@ -1,6 +1,5 @@
 #include "clearing_engine.h"
 #include<algorithm>
-#include<QHash>
 #include<QDebug>
 
 ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
@@ -37,32 +36,4 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
     }
     clearresult.clearingprice=lastprice;
     return clearresult;
-}
-QVector<SettlementItem> settle(const ClearResult& clearresult,SettlementMode mode)
-{
-    QVector<SettlementItem>settlement;
-    QHash<QString,SettlementItem>list;
-    for(const auto& trade:clearresult.trade)
-    {
-        double money;
-        if(mode==SettlementMode::MCP)
-        {
-            money =trade.volume*clearresult.clearingprice;
-        }
-        else
-        {
-            money =trade.volume*trade.generatorprice;
-        }
-        list[trade.generatorID].id=trade.generatorID;
-        list[trade.generatorID].volume+=trade.volume;
-        list[trade.generatorID].amount+=money;
-        list[trade.consumerID].id=trade.consumerID;
-        list[trade.consumerID].amount+=trade.volume*clearresult.clearingprice;
-        list[trade.consumerID].volume+=trade.volume;
-    }
-    for(auto& settle:list)
-    {
-        settlement.append(settle);
-    }
-    return settlement;
 }

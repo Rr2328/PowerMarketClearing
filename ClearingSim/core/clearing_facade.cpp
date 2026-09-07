@@ -221,9 +221,10 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
     out.clearingPrice = cr.clearingprice;
     out.clearedMW = cr.totalvolume;
 
-    // ---- 逐段明细：从 Trade 聚合，结算口径与 B 位 settle() 一致 ----
+    // ---- 逐段明细：从 Trade 聚合，结算口径自管（C 接口 EntityCleared） ----
     //   发电侧：MCP 按出清价结算、PAB 按各段申报价结算
-    //   购电侧：统一按出清价结算（与 settle() 现行口径一致）
+    //   购电侧：统一按出清价结算
+    //   （B 位 settle()/SettlementItem 已在 #94 清理）
     QHash<QString, EntityCleared> genMap, conMap;
     for (const auto &t : cr.trade) {
         if (t.volume <= 0.0)
