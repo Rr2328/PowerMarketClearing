@@ -19,6 +19,8 @@ qt_add_executable(ClearingSim
     data_reader.cpp
     renewable_manager.h
     renewable_manager.cpp
+    quadratic_clearing.h
+    quadratic_clearing.cpp
 
 
 
