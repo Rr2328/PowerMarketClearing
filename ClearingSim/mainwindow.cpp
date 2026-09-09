@@ -1425,10 +1425,14 @@ void MainWindow::refreshImportPage()
         m_loadingBids = false;
     };
 
+    // V1.3.2：二次成本曲线形式下的两张表与分段形式完全不同——
+    //   发电侧 = 成本曲线参数表（a/b/c/pMax，可编辑，改完即时重出清）
+    //   购电侧 = 固定用电量表（按题设不报价，只读；参与出清的是唯一净负荷，
+    //            用电量 = 负荷(t) × 申报占比，与出清分摊同口径）
+    const bool quadForm =
+        m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
     if (m_genTable) {
-        // V1.3.2：二次成本曲线形式下，发电侧显示参数表（a,b,c,pMax）而非分段申报——
-        //   该形式下分段申报不参与出清，显示会造成「引擎读的是分段数据」的误解
-        if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        if (quadForm) {
             m_genTable->setColumnCount(6);
             m_genTable->setHorizontalHeaderLabels({
                 QStringLiteral("电厂名称"), QStringLiteral("机组编号"),
@@ -1444,8 +1448,11 @@ void MainWindow::refreshImportPage()
                 const QStringList vals = {
                     QString::number(g.a, 'f', 4), QString::number(g.b, 'f', 1),
                     QString::number(g.c, 'f', 1), QString::number(g.pMax, 'f', 1)};
-                for (int c = 0; c < 4; ++c)
-                    m_genTable->setItem(row, 2 + c, lockedItem(vals[c]));
+                for (int c = 0; c < 4; ++c) {
+                    auto *it = new QTableWidgetItem(vals[c]);
+                    it->setData(Qt::UserRole, row);   // 源索引 → quadraticGens[row]（见 onQuadParamChanged）
+                    m_genTable->setItem(row, 2 + c, it);
+                }
                 ++row;
             }
             m_loadingBids = false;
@@ -1454,16 +1461,53 @@ void MainWindow::refreshImportPage()
                          QStringLiteral("电厂名称"), QStringLiteral("机组编号"));
         }
     }
-    if (m_conTable)
-        fillBidTable(m_conTable, m_session.market.consumerBids,
-                     QStringLiteral("用户名称"), QStringLiteral("负荷编号"));
+    if (m_conTable) {
+        if (quadForm) {
+            // 固定用电量：与出清同口径——负荷(t) 按申报占比分摊（无负荷曲线时回退申报总量）
+            const auto sums = MarketView::periodSums(m_session.market, m_editPeriod);
+            QVector<int> idx;
+            double conSum = 0.0;
+            for (int i = 0; i < m_session.market.consumerBids.size(); ++i) {
+                const auto &c = m_session.market.consumerBids[i];
+                if (c.period == m_editPeriod || c.period <= 0) {
+                    idx.append(i);
+                    conSum += c.quantity;
+                }
+            }
+            const double load = sums.loadFound ? sums.loadMW : conSum;
+            m_conTable->setColumnCount(4);
+            m_conTable->setHorizontalHeaderLabels({
+                QStringLiteral("用户名称"), QStringLiteral("负荷编号"),
+                QStringLiteral("用电占比"), QStringLiteral("本时段用电量(MW)")});
+            m_loadingBids = true;
+            m_conTable->setRowCount(0);
+            int row = 0;
+            for (int i : idx) {
+                const auto &c = m_session.market.consumerBids[i];
+                const double share = (conSum > 0.0) ? c.quantity / conSum : 0.0;
+                m_conTable->insertRow(row);
+                m_conTable->setItem(row, 0, lockedItem(c.name));
+                m_conTable->setItem(row, 1, lockedItem(c.id));
+                m_conTable->setItem(row, 2, lockedItem(
+                    QStringLiteral("%1%").arg(share * 100.0, 0, 'f', 1)));
+                m_conTable->setItem(row, 3, lockedItem(
+                    QString::number(load * share, 'f', 1)));
+                ++row;
+            }
+            m_loadingBids = false;
+        } else {
+            fillBidTable(m_conTable, m_session.market.consumerBids,
+                         QStringLiteral("用户名称"), QStringLiteral("负荷编号"));
+        }
+    }
 
-    // V1.3.2：页签与状态卡随申报形式联动
-    const bool quadForm =
-        m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
-    if (m_importTabs)
-        m_importTabs->setTabText(0, quadForm ? QStringLiteral("发电侧成本曲线")
+    // V1.3.2：页签与状态卡随申报形式联动（quadForm 已在上方计算）
+    if (m_importTabs) {
+        m_importTabs->setTabText(0, quadForm ? QStringLiteral("发电侧成本曲线（a/b/c/pMax 可调）")
                                              : QStringLiteral("发电侧申报"));
+        m_importTabs->setTabText(1, quadForm ? QStringLiteral("购电侧固定负荷（不报价）")
+                                             : QStringLiteral("购电侧申报"));
+    }
     if (m_genCardName)
         m_genCardName->setText(quadForm ? QStringLiteral("发电侧成本曲线")
                                         : QStringLiteral("发电侧申报"));
@@ -1565,6 +1609,11 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     const bool isGen = (tbl == m_genTable);
     if (!isGen && tbl != m_conTable)
         return;
+    // V1.3.2：二次模式发电侧表为成本曲线参数表（a/b/c/pMax），列语义与分段表完全不同
+    if (isGen && m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        onQuadParamChanged(item);
+        return;
+    }
     const int col = item->column();
     // #90：横向段展开布局，列结构为 名称/编号/段1出力/段1报价/段2出力/段2报价/…
     //   col<2 为锁定列；偶数列（从2开始）为出力，奇数列为报价
@@ -1644,6 +1693,82 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         handle(m_session.market.generatorBids);
     else
         handle(m_session.market.consumerBids);
+}
+
+// ============================================================
+// V1.3.2 P1：二次模式发电侧参数表编辑写回
+//   列结构：名称/编号（锁定）+ a/b/c/pMax（可编辑，UserRole = 机组索引）
+//   a=0 允许（退化为按 b 报价的阶梯，引擎内有保护）；pMax 必须 > 0
+// ============================================================
+void MainWindow::onQuadParamChanged(QTableWidgetItem *item)
+{
+    const int col = item->column();
+    if (col < 2)
+        return;
+    const int idx = item->data(Qt::UserRole).toInt();
+    if (idx < 0 || idx >= m_session.market.quadraticGens.size())
+        return;
+    auto &g = m_session.market.quadraticGens[idx];
+
+    const int field = col - 2;   // 0=a 1=b 2=c 3=pMax
+    const double oldVal = (field == 0) ? g.a
+                        : (field == 1) ? g.b
+                        : (field == 2) ? g.c : g.pMax;
+    const auto revert = [this, item, oldVal]() {
+        m_loadingBids = true;
+        item->setText(QString::number(oldVal, 'f', (oldVal < 1.0) ? 4 : 1));
+        m_loadingBids = false;
+    };
+    const auto fail = [&](const QString &msg) {
+        revert();
+        statusBar()->showMessage(msg, 6000);
+    };
+
+    bool ok = false;
+    const double val = item->text().toDouble(&ok);
+    if (!ok)
+        return fail(QStringLiteral("输入无效：请填写数字（如 0.02 或 230）"));
+    if (qFuzzyCompare(val + 1.0, oldVal + 1.0))   // 数值未变（仅文本格式差异）
+        return;
+
+    switch (field) {
+    case 0:
+        if (val < 0.0 || val > 10.0)
+            return fail(QStringLiteral("a 需在 0~10 之间（a=0 退化为按 b 报价的阶梯形式）"));
+        g.a = val;
+        break;
+    case 1:
+        if (val < 0.0 || val > 540.0)
+            return fail(QStringLiteral("b 需在 0~540 元/MWh 之间（限价规则）"));
+        g.b = val;
+        break;
+    case 2:
+        if (val < 0.0 || val > 100000.0)
+            return fail(QStringLiteral("c 需为 0~100000 元之间的非负数"));
+        g.c = val;
+        break;
+    case 3:
+        if (val <= 0.0 || val > 2000.0)
+            return fail(QStringLiteral("pMax 需为正数且不超过 2000 MW"));
+        g.pMax = val;
+        break;
+    }
+
+    // 已有出清结果 → 立即重算并刷新各页（与分段申报编辑同套路）
+    if (m_session.hasResult && m_session.hasData) {
+        rerunIfReady();
+        const auto &pr = m_session.result.periods.isEmpty()
+                             ? PeriodResult() : m_session.result.periods.first();
+        statusBar()->showMessage(
+            QStringLiteral("成本曲线已修改并重算：%1·%2 → MC=2×%3×P+%4，出清价 %5 元/MWh")
+                .arg(g.name, g.id)
+                .arg(g.a, 0, 'f', g.a < 1.0 ? 4 : 2).arg(g.b, 0, 'f', 1)
+                .arg(pr.clearingPrice, 0, 'f', 0),
+            6000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("成本曲线已修改（尚未出清，可在②仿真控制点击「开始仿真」）"), 5000);
+    }
 }
 
 // ============================================================
