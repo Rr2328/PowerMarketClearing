@@ -326,10 +326,11 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData &market,
     QVector<PeriodResult> raw;
     raw.reserve(96);
     for (int period = 1; period <= 96; ++period) {
-        // 需求基准：负荷(t)，无曲线回退购电申报总量（与渗透率换算同一基准）
-        double load = loadAt(market, period);
-        if (load < 0.0)
-            load = totalDemandAt(market, period);
+        // V1.3.3：需求优先取购电申报总量（P1 逐时段可编辑——改总量即移动 λ*）；
+        //   无申报数据时回退负荷曲线。渗透率换算仍以负荷曲线为基准（契约第五章）
+        double load = totalDemandAt(market, period);
+        if (load <= 0.0)
+            load = loadAt(market, period);
 
         const double renewCap = renewCapacityAt(market, period, penetration);
         const double renewActual = std::min(renewCap, std::max(0.0, load));
