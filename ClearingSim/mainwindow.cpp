@@ -50,6 +50,7 @@
 #include <QtCharts/QValueAxis>
 
 #include "core/clearing_facade.h"
+#include "quadratic_clearing.h"   // P4 二次截面现解（与引擎同一出清算法）
 #include "core/market_view.h"
 #include "data/data_reader.h"
 
@@ -2177,6 +2178,8 @@ void MainWindow::refreshChartPage()
 
         double cumG = 0.0, cumC = 0.0, maxPrice = 0.0;
 
+        // 二次模式截面现解结果（<0 = 非二次模式，走聚合结果取值）
+        double quadLam = -1.0, quadCv = -1.0;
         if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
             // 二次曲线模式（选题 2026v2 (10) 问）：供给 = 平滑 MC 包络曲线
             //   P(λ) = Σ clamp((λ−b)/2a, 0, pMax)，新能源 0 价水平段置于曲线起点；
@@ -2194,13 +2197,22 @@ void MainWindow::refreshChartPage()
             const double renewActual =
                 std::min(renewCap, std::max(0.0, load));
 
-            double mcMax = 1.0, pMaxSum = 0.0;
-            for (const auto &g : m_session.market.quadraticGens) {
-                // a≈0 的恒定边际成本机组：λ 达到 b 即全程顶格
-                mcMax = std::max(mcMax, 2.0 * g.a * g.pMax + g.b);
-                pMaxSum += g.pMax;
-            }
-            maxPrice = mcMax * 1.10;
+        double mcMax = 1.0, pMaxSum = 0.0;
+        for (const auto &g : m_session.market.quadraticGens) {
+            // a≈0 的恒定边际成本机组：λ 达到 b 即全程顶格
+            mcMax = std::max(mcMax, 2.0 * g.a * g.pMax + g.b);
+            pMaxSum += g.pMax;
+        }
+        maxPrice = mcMax * 1.10;
+
+        // 本截面出清价：按当前参数现解（与引擎 quadraticClearing 同一算法、
+        //   96 期原生口径）。聚合视图（24 期）的 clearingPrice/clearedMW 是
+        //   小时均值，与 15 分钟截面存在口径差，画出来虚线/出清点会偏离交点
+        const QuadraticClearResult qr = quadraticClearing(
+            m_session.market.quadraticGens,
+            std::max(0.0, load - renewActual));
+        quadLam = qr.clearingPrice;                 // <0 表示非二次模式（见下方取值）
+        quadCv = renewActual + qr.totalVolume;      // 出清量（稀缺时 = 供给顶格量）
 
             m_supplySeries->append(0.0, 0.0);
             m_supplySeries->append(renewActual, 0.0);   // 新能源 0 价段
@@ -2254,23 +2266,31 @@ void MainWindow::refreshChartPage()
 
         // 出清价水平线 + 出清点标记（#89：按所选时段映射出清结果；
         //   24 期聚合视图时，15 分钟截面映射到所在小时的聚合时段）
+        // #89：时段截面 → 出清结果映射。24 期聚合视图必须先映射到所在小时
+        //   再查——聚合结果的 period=1..24 会与 15 分钟截面号 1..24 撞号，
+        //   直接匹配会取错小时（如截面 2=00:15 被错配到第 2 小时 05:00 的聚合值），
+        //   表现为 P4 出清价虚线/出清点飘离交点
         const PeriodResult *pr = nullptr;
-        for (const auto &p : periods)
-            if (p.period == chartPeriod) { pr = &p; break; }
-        if (!pr && periods.size() == 24) {
+        if (periods.size() == 24) {
             const int hourIdx = (chartPeriod - 1) / 4 + 1;
             for (const auto &p : periods)
                 if (p.period == hourIdx) { pr = &p; break; }
+        } else {
+            for (const auto &p : periods)
+                if (p.period == chartPeriod) { pr = &p; break; }
         }
         if (!pr && !periods.isEmpty())
             pr = &periods.first();
-        const double cp = pr ? pr->clearingPrice : 0.0;
+        // 二次模式用上方现解值（截面精确口径）；分段模式用聚合结果
+        const double cp = (quadLam >= 0.0) ? quadLam
+                          : (pr ? pr->clearingPrice : 0.0);
         if (cp > 0.0) {
             m_clearingLine->append(0.0, cp);
             m_clearingLine->append(maxX, cp);
         }
         if (m_clearPoint) {
-            const double cv = pr ? pr->clearedMW : 0.0;
+            const double cv = (quadCv >= 0.0) ? quadCv
+                              : (pr ? pr->clearedMW : 0.0);
             if (cp > 0.0 && cv > 0.0)
                 m_clearPoint->append(cv, cp);
         }
