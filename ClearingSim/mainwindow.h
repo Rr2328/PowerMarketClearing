@@ -21,6 +21,7 @@ class QStackedWidget;
 class QTableWidget;
 class QTabWidget;
 class QButtonGroup;
+class QRadioButton;
 class QValueAxis;
 
 // 主窗口：深色科技风封面页（隐藏导航）→ 进入平台 → 左导航（5 页）+ 右侧内容区
@@ -49,6 +50,7 @@ private slots:
     void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表编辑写回 + 自动重算（#82）
     void onEditPeriodChanged(int index);   // P1：交易时段下拉切换 → 单时段小表刷新（#89）
     void onPrefillByLoad();                // P1：按负荷曲线预填当前时段申报量（#89）
+    void onBidFormChanged();               // P1：申报形式切换 → 按新形式重载当前数据源（V1.3.2）
 
 private:
     // 封面页 + 五个页面 + 空态卡片
@@ -65,7 +67,9 @@ private:
     bool loadDataFiles(const QString &genFile, const QString &conFile,
                        const QString &sourceName,
                        const QString &loadFile = QString(),      // 可选：负荷曲线（渗透率基准）
-                       const QString &renewFile = QString());    // 可选：新能源形状曲线
+                       const QString &renewFile = QString(),     // 可选：新能源形状曲线
+                       bool quadratic = false);                  // 申报形式：二次成本曲线（V1.3.2）
+    bool reloadCurrentSource();                      // 按记忆的数据源 + 当前申报形式重载
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
     void runClearing();                              // 多时段出清（新能源 = 渗透率×负荷）
 
@@ -127,6 +131,17 @@ private:
     QTableWidget   *m_conTable     = nullptr;
     QLabel         *m_statusBadges[2] = {nullptr, nullptr};
     QLabel         *m_checkText    = nullptr;
+    // V1.3.2：申报形式选择（数据属性，在导入页确定；互斥单选）
+    QRadioButton   *m_formStep     = nullptr;   // 多段量价申报（现行口径）
+    QRadioButton   *m_formQuad     = nullptr;   // 二次成本曲线申报（选题第10问扩展）
+    QLabel         *m_formHint     = nullptr;   // 形式说明（随单选联动）
+    QLabel         *m_genCardName  = nullptr;   // 发电侧状态卡名称（随形式联动）
+    QLabel         *m_genCardDesc  = nullptr;   // 发电侧状态卡文件说明（随形式联动）
+    QLabel         *m_bidFormLabel = nullptr;   // P2 申报形式只读标识（在 P1 切换）
+    // 申报形式切换时的重载数据源记忆
+    QString         m_lastGenFile, m_lastConFile, m_lastSourceName;
+    QString         m_lastLoadFile, m_lastRenewFile;
+    bool            m_hasLastSource = false;
     // #89：P1 单时段编辑视图
     QComboBox      *m_periodCombo  = nullptr;   // 交易时段下拉（96 期原生粒度）
     QLabel         *m_periodHint   = nullptr;   // 本时段供需概览（购电申报/负荷/发电可用）

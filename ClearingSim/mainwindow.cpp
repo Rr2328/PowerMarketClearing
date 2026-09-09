@@ -11,6 +11,8 @@
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QRadioButton>
+#include <QSignalBlocker>
 #include <QCoreApplication>
 #include <QDate>
 #include <QDir>
@@ -350,6 +352,33 @@ QWidget *MainWindow::buildImportPage()
 
     m_importTabs = new QTabWidget(bidBox);
 
+    // V1.3.2：申报形式（互斥的市场申报口径，属数据属性，在导入时确定）
+    //   切换即按新形式重载当前数据源；缺二次参数文件时明确拒绝并回退，不静默降级。
+    auto *formRow = new QHBoxLayout();
+    auto *formLbl = new QLabel(QStringLiteral("申报形式："), bidBox);
+    m_formStep = new QRadioButton(QStringLiteral("多段量价申报（现行口径）"), bidBox);
+    m_formQuad = new QRadioButton(QStringLiteral("二次成本曲线申报（选题第 10 问扩展）"), bidBox);
+    m_formStep->setChecked(!m_session.quadraticMode);
+    m_formQuad->setChecked(m_session.quadraticMode);
+    m_formStep->setToolTip(QStringLiteral(
+        "每机组按出力区间分两段以上申报「量 + 价」（generator_bids.csv），\n"
+        "双侧报价阶梯撮合，出清价由边际段决定——现行现货市场通行口径。"));
+    m_formQuad->setToolTip(QStringLiteral(
+        "每机组申报完整成本特性 C(P)=aP²+bP+c（generator_quadratic.csv），\n"
+        "由边际成本 MC=2aP+b 连续出清；用户侧按题设取固定用电量（价格弹性不计）。\n"
+        "要求当前数据目录含 generator_quadratic.csv，缺失将拒绝启用。"));
+    m_formHint = new QLabel(bidBox);
+    m_formHint->setObjectName("paramSummary");
+    m_formHint->setWordWrap(true);
+    formRow->addWidget(formLbl);
+    formRow->addWidget(m_formStep);
+    formRow->addWidget(m_formQuad);
+    formRow->addStretch();
+    connect(m_formStep, &QRadioButton::toggled,
+            this, &MainWindow::onBidFormChanged);
+    connect(m_formQuad, &QRadioButton::toggled,
+            this, &MainWindow::onBidFormChanged);
+
     // #89：交易时段选择行（96 期原生粒度，编辑/预填都针对单时段）
     auto *periodRow = new QHBoxLayout();
     auto *periodLbl = new QLabel(QStringLiteral("交易时段："), bidBox);
@@ -422,6 +451,8 @@ QWidget *MainWindow::buildImportPage()
     btnRow->addStretch();
 
     auto *bidLay = new QVBoxLayout(bidBox);
+    bidLay->addLayout(formRow);
+    bidLay->addWidget(m_formHint);
     bidLay->addLayout(periodRow);
     bidLay->addWidget(m_importTabs);
     bidLay->addLayout(btnRow);
@@ -439,11 +470,15 @@ QWidget *MainWindow::buildImportPage()
         card->setObjectName("statusCard");
         auto *name = new QLabel(QString::fromUtf8(sets[i].name), card);
         name->setObjectName("statusCardName");
+        if (i == 0)
+            m_genCardName = name;      // 发电侧卡片名称随申报形式联动（V1.3.2）
         auto *badge = new QLabel(QStringLiteral("未导入"), card);
         badge->setObjectName("statusBadgeWait");
         badge->setAlignment(Qt::AlignCenter);
         auto *desc = new QLabel(QString::fromUtf8(sets[i].desc), card);
         desc->setObjectName("statusCardDesc");
+        if (i == 0)
+            m_genCardDesc = desc;      // 发电侧卡片文件说明随申报形式联动（V1.3.2）
         auto *top = new QHBoxLayout();
         top->addWidget(name);
         top->addStretch();
@@ -580,19 +615,16 @@ QWidget *MainWindow::buildControlPage()
     });
     form->addRow(QStringLiteral("新能源渗透率："), sliderRow);
 
-    // 申报形式切换（选题 2026v2 (10) 问）：分段报价 / 二次成本曲线
-    auto *quadCheck = new QCheckBox(QStringLiteral("二次曲线申报模式（C(P)=aP²+bP+c，需数据目录含 generator_quadratic.csv）"));
-    quadCheck->setChecked(m_session.quadraticMode);
-    quadCheck->setToolTip(QStringLiteral(
-        "发电侧以二次成本曲线申报、用户侧固定需求（负荷口径）：\n"
-        "出清价 λ* 满足 Σ P_i(λ*) = 净负荷，二分搜索求得（统一边际出清的连续版）。\n"
-        "仅当导入数据目录含 generator_quadratic.csv 时生效，否则回退分段撮合。"));
-    connect(quadCheck, &QCheckBox::toggled, this, [this](bool on) {
-        m_session.quadraticMode = on;
-        if (m_session.hasResult && m_session.hasData)
-            rerunIfReady();
-    });
-    form->addRow(QStringLiteral("申报形式："), quadCheck);
+    // 申报形式（V1.3.2）：只读标识——申报形式属数据属性，在「① 数据导入」页确定，
+    //   此处仅展示当前生效形式；切换会按新形式重载数据源
+    m_bidFormLabel = new QLabel(
+        m_session.quadraticMode
+            ? QStringLiteral("二次成本曲线申报（C(P)=aP²+bP+c，MC=2aP+b 连续出清）")
+            : QStringLiteral("多段量价申报（双侧分段报价，边际段定价）"));
+    m_bidFormLabel->setToolTip(QStringLiteral(
+        "申报形式在「① 数据导入」页选择，随数据载入生效；\n"
+        "二次成本曲线形式要求当前数据目录含 generator_quadratic.csv。"));
+    form->addRow(QStringLiteral("申报形式："), m_bidFormLabel);
 
     m_paramSummary = new QLabel();
     m_paramSummary->setObjectName("paramSummary");
@@ -1067,11 +1099,28 @@ QWidget *MainWindow::buildPerspectiveBar()
 // ============================================================
 bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
                                const QString &sourceName,
-                               const QString &loadFile, const QString &renewFile)
+                               const QString &loadFile, const QString &renewFile,
+                               bool quadratic)
 {
     MarketData d;
     QStringList errs;
     bool ok = true;
+
+    // V1.3.2：二次成本曲线形式要求当前数据目录含 generator_quadratic.csv——
+    //   缺失时明确拒绝（不静默回退），由调用方回退单选并提示
+    const QString quadFile =
+        QFileInfo(genFile.isEmpty() ? conFile : genFile).absoluteDir()
+            .filePath(QStringLiteral("generator_quadratic.csv"));
+    if (quadratic && !QFile::exists(quadFile)) {
+        m_checkErrors = QStringList{QStringLiteral(
+            "当前数据目录未找到 generator_quadratic.csv，无法启用「二次成本曲线申报」；"
+            "请使用内置样例（自带该文件），或保持「多段量价申报」形式导入。")};
+        renderCheckBar();
+        statusBar()->showMessage(
+            QStringLiteral("缺少二次成本曲线参数文件，已保持多段量价申报"), 8000);
+        return false;
+    }
+
     if (!genFile.isEmpty())
         ok = DataReader::readGeneratorBids(genFile, d.generatorBids, errs) && ok;
     if (!conFile.isEmpty())
@@ -1083,11 +1132,8 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     if (!renewFile.isEmpty() && QFile::exists(renewFile))
         ok = DataReader::readRenewableOutput(renewFile, d.renewableOutputs, errs) && ok;
 
-    // 可选：二次成本机组参数（同目录 generator_quadratic.csv，存在才启用二次模式，
-    // 选题 2026v2 (10) 问；读取失败仅提示，不阻断主流程）
-    const QString quadFile =
-        QFileInfo(genFile.isEmpty() ? conFile : genFile).absoluteDir()
-            .filePath(QStringLiteral("generator_quadratic.csv"));
+    // 可选：二次成本机组参数（同目录 generator_quadratic.csv，存在才读；
+    // 二次形式下已在上面的存在性检查确认——选题 2026v2 (10) 问）
     if (QFile::exists(quadFile))
         DataReader::readQuadraticGenerators(quadFile, d.quadraticGens, errs);
 
@@ -1110,13 +1156,64 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     m_session.marketBaseline = d;       // 拍快照：按负荷预填的重置基准（幂等）
     m_session.dataSource = sourceName;
     m_session.hasData = true;
+    m_session.quadraticMode = quadratic;   // 申报形式与数据绑定（导入时确定，V1.3.2）
     m_session.resetResult();
     m_checkErrors.clear();
+
+    // 记忆数据源：申报形式切换时按新形式重载（V1.3.2）
+    m_lastGenFile = genFile;
+    m_lastConFile = conFile;
+    m_lastSourceName = sourceName;
+    m_lastLoadFile = loadFile;
+    m_lastRenewFile = renewFile;
+    m_hasLastSource = true;
 
     refreshImportPage();
     updateFileNamePreviews();
     statusBar()->showMessage(QStringLiteral("数据导入成功：%1（校验通过）").arg(sourceName), 6000);
     return true;
+}
+
+// V1.3.2：按记忆的数据源 + 当前申报形式重载（切换申报形式时调用）
+bool MainWindow::reloadCurrentSource()
+{
+    if (!m_hasLastSource)
+        return false;
+    return loadDataFiles(m_lastGenFile, m_lastConFile, m_lastSourceName,
+                         m_lastLoadFile, m_lastRenewFile,
+                         m_formQuad && m_formQuad->isChecked());
+}
+
+// P1：申报形式切换（V1.3.2）——按新形式重载当前数据源；
+//   重载失败（如缺二次参数文件）时回退单选并保持原形式
+void MainWindow::onBidFormChanged()
+{
+    if (!m_formStep || !m_formQuad)
+        return;
+    const bool quad = m_formQuad->isChecked();
+    if (quad == m_session.quadraticMode)
+        return;                          // 同值（含初始化触发），不动作
+
+    if (!m_session.hasData) {
+        // 未载入数据：仅记录形式，载入时生效
+        m_session.quadraticMode = quad;
+        refreshImportPage();
+        return;
+    }
+
+    const bool hadResult = m_session.hasResult;
+    if (!reloadCurrentSource()) {
+        // 重载失败：回退单选到原形式（屏蔽信号防递归）
+        const QSignalBlocker b1(*m_formStep);
+        const QSignalBlocker b2(*m_formQuad);
+        m_formStep->setChecked(true);
+        m_formQuad->setChecked(false);
+        refreshImportPage();
+        return;
+    }
+    // 之前有出清结果：按新形式立即重算，保持页面一致
+    if (hadResult)
+        runClearing();
 }
 
 // 定位仓库内 data/samples 目录（Qt Creator 运行目录与源码目录不同）
@@ -1152,7 +1249,8 @@ void MainWindow::onLoadSamples()
                   dir + QStringLiteral("/scenario/consumer_bids.csv"),
                   QStringLiteral("内置场景（8 机组 · 3 用户）"),
                   dir + QStringLiteral("/curves/load_curve.csv"),
-                  dir + QStringLiteral("/curves/renewable_output.csv"));
+                  dir + QStringLiteral("/curves/renewable_output.csv"),
+                  m_formQuad && m_formQuad->isChecked());
 }
 
 // P1：选择 CSV 文件（按文件名自动识别两张申报表）
@@ -1172,7 +1270,11 @@ void MainWindow::onImportCsv()
         return QString();
     };
 
-    const QString gen   = pick(files, {QStringLiteral("发电"), QStringLiteral("generator"), QStringLiteral("gen_")});
+    // 二次参数文件优先识别（V1.3.2）：否则其文件名含 "generator" 会被误认成分段发电申报
+    const QString quad = pick(files, {QStringLiteral("quadratic"), QStringLiteral("二次")});
+    QString gen;
+    if (quad.isEmpty())
+        gen = pick(files, {QStringLiteral("发电"), QStringLiteral("generator"), QStringLiteral("gen_")});
     const QString con   = pick(files, {QStringLiteral("用户"), QStringLiteral("购电"), QStringLiteral("consumer"), QStringLiteral("con_")});
 
     if (gen.isEmpty() && con.isEmpty()) {
@@ -1180,13 +1282,16 @@ void MainWindow::onImportCsv()
         return;
     }
 
-    // 曲线文件未选时，在申报文件同目录自动识别（可选，缺省回退购电申报总量）
-    const QDir bidDir = QFileInfo(gen.isEmpty() ? con : gen).absoluteDir();
+    const bool quadForm = m_formQuad && m_formQuad->isChecked();
+
+    // 曲线与二次参数文件未选时，在申报文件同目录自动识别（可选，缺省回退购电申报总量）
+    const QDir bidDir = QFileInfo(gen.isEmpty() ? (quad.isEmpty() ? con : quad) : gen).absoluteDir();
     const QString loadCurve = bidDir.filePath(QStringLiteral("load_curve.csv"));
     const QString renewCurve = bidDir.filePath(QStringLiteral("renewable_output.csv"));
     loadDataFiles(gen, con, QStringLiteral("自定义 CSV 导入"),
                   QFile::exists(loadCurve) ? loadCurve : QString(),
-                  QFile::exists(renewCurve) ? renewCurve : QString());
+                  QFile::exists(renewCurve) ? renewCurve : QString(),
+                  quadForm);
 }
 
 // P1：清空数据
@@ -1320,12 +1425,60 @@ void MainWindow::refreshImportPage()
         m_loadingBids = false;
     };
 
-    if (m_genTable)
-        fillBidTable(m_genTable, m_session.market.generatorBids,
-                     QStringLiteral("电厂名称"), QStringLiteral("机组编号"));
+    if (m_genTable) {
+        // V1.3.2：二次成本曲线形式下，发电侧显示参数表（a,b,c,pMax）而非分段申报——
+        //   该形式下分段申报不参与出清，显示会造成「引擎读的是分段数据」的误解
+        if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+            m_genTable->setColumnCount(6);
+            m_genTable->setHorizontalHeaderLabels({
+                QStringLiteral("电厂名称"), QStringLiteral("机组编号"),
+                QStringLiteral("a（元/MW²）"), QStringLiteral("b（元/MWh）"),
+                QStringLiteral("c（元）"), QStringLiteral("pMax（MW）")});
+            m_loadingBids = true;
+            m_genTable->setRowCount(0);
+            int row = 0;
+            for (const auto &g : m_session.market.quadraticGens) {
+                m_genTable->insertRow(row);
+                m_genTable->setItem(row, 0, lockedItem(g.name));
+                m_genTable->setItem(row, 1, lockedItem(g.id));
+                const QStringList vals = {
+                    QString::number(g.a, 'f', 4), QString::number(g.b, 'f', 1),
+                    QString::number(g.c, 'f', 1), QString::number(g.pMax, 'f', 1)};
+                for (int c = 0; c < 4; ++c)
+                    m_genTable->setItem(row, 2 + c, lockedItem(vals[c]));
+                ++row;
+            }
+            m_loadingBids = false;
+        } else {
+            fillBidTable(m_genTable, m_session.market.generatorBids,
+                         QStringLiteral("电厂名称"), QStringLiteral("机组编号"));
+        }
+    }
     if (m_conTable)
         fillBidTable(m_conTable, m_session.market.consumerBids,
                      QStringLiteral("用户名称"), QStringLiteral("负荷编号"));
+
+    // V1.3.2：页签与状态卡随申报形式联动
+    const bool quadForm =
+        m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
+    if (m_importTabs)
+        m_importTabs->setTabText(0, quadForm ? QStringLiteral("发电侧成本曲线")
+                                             : QStringLiteral("发电侧申报"));
+    if (m_genCardName)
+        m_genCardName->setText(quadForm ? QStringLiteral("发电侧成本曲线")
+                                        : QStringLiteral("发电侧申报"));
+    if (m_genCardDesc)
+        m_genCardDesc->setText(quadForm
+                                   ? QStringLiteral("generator_quadratic.csv · C(P)=aP²+bP+c")
+                                   : QStringLiteral("generator_bids.csv"));
+    if (m_formHint)
+        m_formHint->setText(quadForm
+            ? QStringLiteral("选题 2026v2 第 (10) 问扩展：发电侧申报连续成本特性，出清价 λ* 由边际成本曲线与固定净负荷的交点确定（用户侧按题设为固定用电量）。")
+            : QStringLiteral("现行现货市场申报口径：双侧分段报价阶梯撮合，出清价由边际段决定。"));
+    if (m_bidFormLabel)
+        m_bidFormLabel->setText(quadForm
+            ? QStringLiteral("二次成本曲线申报（C(P)=aP²+bP+c，MC=2aP+b 连续出清）——在①数据导入切换")
+            : QStringLiteral("多段量价申报（双侧分段报价，边际段定价）——在①数据导入切换"));
 
     // #89：本时段供需概览（购电申报总量 / 负荷曲线 / 发电可用）
     if (m_periodHint) {
@@ -1357,8 +1510,12 @@ void MainWindow::refreshImportPage()
     }
 
     // 数据集状态卡（发电/购电两表；新能源由 P2 滑块控制）
+    //   V1.3.2：发电侧就绪判定随申报形式切换（二次形式看二次参数表）
+    const bool quadForm2 =
+        m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
     const bool ready[2] = {
-        !m_session.market.generatorBids.isEmpty(),
+        quadForm2 ? !m_session.market.quadraticGens.isEmpty()
+                  : !m_session.market.generatorBids.isEmpty(),
         !m_session.market.consumerBids.isEmpty(),
     };
     for (int i = 0; i < 2; ++i) {
