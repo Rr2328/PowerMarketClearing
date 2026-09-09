@@ -207,6 +207,39 @@ int main(int argc, char *argv[])
               QStringLiteral("无负荷曲线：P_re(1)=0.2×购电申报 100=20"));
     }
 
+    // ---------------- ⑤ 稀缺封顶：供给量尽 → 出清价 = 限价 540（契约 V1.3.1） ----------------
+    {
+        // 场景 A：供给 30 MW @200，需求 50 MW @300 → 供给先尽、缺口 20 MW → 封顶 540
+        MarketData m;
+        GeneratorBid g;
+        g.id = QStringLiteral("#1机组"); g.name = QStringLiteral("测试电厂");
+        g.period = 1; g.segment = 1; g.price = 200.0; g.quantity = 30.0;
+        m.generatorBids.append(g);
+        ConsumerBid c;
+        c.id = QStringLiteral("L1"); c.name = QStringLiteral("测试用户");
+        c.period = 1; c.segment = 1; c.price = 300.0; c.quantity = 50.0;
+        m.consumerBids.append(c);
+
+        const ClearingResult r = ClearingFacade::clearBenchmark(m, QStringLiteral("MCP"));
+        check(r.periods.size() == 1
+                  && near(r.periods[0].clearingPrice, 540.0)
+                  && near(r.periods[0].clearedMW, 30.0),
+              QStringLiteral("稀缺封顶：供给 30 < 需求 50 → 出清价升至限价 540、成交 30"));
+
+        // 场景 B：供给要价 350 > 需求愿付 300 → 价格不交叉、零成交，
+        //   维持边际定价（lastprice=0），不触发封顶（双侧均有剩余，非量尽）
+        MarketData m2;
+        GeneratorBid g2 = g;
+        g2.price = 350.0;
+        m2.generatorBids.append(g2);
+        m2.consumerBids.append(c);
+        const ClearingResult r2 = ClearingFacade::clearBenchmark(m2, QStringLiteral("MCP"));
+        check(r2.periods.size() == 1
+                  && near(r2.periods[0].clearingPrice, 0.0)
+                  && near(r2.periods[0].clearedMW, 0.0),
+              QStringLiteral("价格不交叉：零成交、出清价 0（不触发封顶）"));
+    }
+
     qInfo().noquote() << (failedTests == 0
                               ? QStringLiteral("All ClearingFacade V1.3 tests passed.")
                               : QStringLiteral("%1 test(s) FAILED.").arg(failedTests));

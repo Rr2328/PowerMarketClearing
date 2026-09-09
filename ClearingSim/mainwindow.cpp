@@ -1826,6 +1826,14 @@ void MainWindow::refreshChartPage()
             cumC += s.quantity;
             m_demandSeries->append(cumC, s.price);
         }
+        // V1.3.1 契约封口（§7.3-2，老师评审反馈）：需求量尽 → 垂直降到 0；
+        //   供给量尽 → 垂直升到限价 540（稀缺价语义）。保证任意供需形态下
+        //   两线必有几何交点：供大于求时需求封口线穿过供给水平段，反之亦然。
+        constexpr double kPriceCap = 540.0; // 总则规则④：双侧统一限价 0–540
+        if (!con.isEmpty())
+            m_demandSeries->append(cumC, 0.0);
+        if (!gen.isEmpty())
+            m_supplySeries->append(cumG, kPriceCap);
         const double maxX = std::max(cumG, cumC) * 1.05;
 
         // 出清价水平线 + 出清点标记（#89：按所选时段映射出清结果；
