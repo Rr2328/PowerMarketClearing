@@ -347,11 +347,11 @@ int main(
 
     scenarioFiles.generatorBidsFile =
         repoRoot +
-        "/data/samples/scenario/generator_bids.csv";
+        "/data/samples/scenario_balanced/generator_bids.csv";
 
     scenarioFiles.consumerBidsFile =
         repoRoot +
-        "/data/samples/scenario/consumer_bids.csv";
+        "/data/samples/scenario_balanced/consumer_bids.csv";
 
     scenarioFiles.loadCurveFile =
         repoRoot +

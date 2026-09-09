@@ -85,7 +85,7 @@ QString searchRepoRoot(const QString &startPath)
 {
     QDir dir(startPath);
     while (true) {
-        if (dir.exists("data/samples/scenario")
+        if (dir.exists("data/samples/scenario_balanced")
             && dir.exists("data/samples/benchmark"))
             return dir.absolutePath();
         if (!dir.cdUp())
@@ -161,8 +161,8 @@ void testScenarioLongTableEndToEnd(const QString &repoRoot)
     QStringList errors;
     MarketData market;
     DataFileSet files;
-    files.generatorBidsFile = repoRoot + "/data/samples/scenario/generator_bids.csv";
-    files.consumerBidsFile = repoRoot + "/data/samples/scenario/consumer_bids.csv";
+    files.generatorBidsFile = repoRoot + "/data/samples/scenario_balanced/generator_bids.csv";
+    files.consumerBidsFile = repoRoot + "/data/samples/scenario_balanced/consumer_bids.csv";
     files.loadCurveFile = repoRoot + "/data/samples/curves/load_curve.csv";
     files.renewableOutputFile = repoRoot + "/data/samples/curves/renewable_output.csv";
     const bool okRead = DataReader::readAll(files, market, errors);
@@ -354,8 +354,8 @@ void testAggregation24(const QString &repoRoot)
     QStringList errors;
     MarketData market;
     DataFileSet files;
-    files.generatorBidsFile = repoRoot + "/data/samples/scenario/generator_bids.csv";
-    files.consumerBidsFile = repoRoot + "/data/samples/scenario/consumer_bids.csv";
+    files.generatorBidsFile = repoRoot + "/data/samples/scenario_balanced/generator_bids.csv";
+    files.consumerBidsFile = repoRoot + "/data/samples/scenario_balanced/consumer_bids.csv";
     files.loadCurveFile = repoRoot + "/data/samples/curves/load_curve.csv";
     files.renewableOutputFile = repoRoot + "/data/samples/curves/renewable_output.csv";
     DataReader::readAll(files, market, errors);

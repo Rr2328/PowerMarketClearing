@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-按数据契约 V1.3（D6 样例重标定）生成 scenario 双侧长表样例。
+按数据契约 V1.3（D6 样例重标定）生成 scenario_balanced 双侧长表样例（逐时段平衡对拍锚点）。
 
 设计口径（与 docs/data-contract.md §八 实施映射一致）：
 - 负荷曲线沿用 curves/load_curve.csv（96 点，688.4 ~ 1135.8 MW）
@@ -14,15 +14,15 @@
     → 默认预填态（渗透率 20%）下逐时段供需恰好平衡
 - 期望价格曲线（MCP）：夜谷 210 → 早爬坡 220/230/240 → 早峰 260 → 午间 220 → 晚峰 260 → 夜 210
 
-用法：python gen_scenario_v13.py  （在 data/samples/ 目录下运行，覆盖 scenario/ 两表）
+用法：python gen_scenario_v13.py  （在 data/samples/ 目录下运行，覆盖 scenario_balanced/ 两表（测试锚点数据；教学版 scenario/ 由 gen_teaching_variant.py 派生））
 """
 import csv
 import os
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOAD_CSV = os.path.join(HERE, "curves", "load_curve.csv")
-GEN_OUT = os.path.join(HERE, "scenario", "generator_bids.csv")
-CON_OUT = os.path.join(HERE, "scenario", "consumer_bids.csv")
+GEN_OUT = os.path.join(HERE, "scenario_balanced", "generator_bids.csv")
+CON_OUT = os.path.join(HERE, "scenario_balanced", "consumer_bids.csv")
 
 PENETRATION = 0.20  # 默认渗透率（契约 V1.3：0–100%，默认 20%）
 

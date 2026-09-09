@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-生成「现实供需形态教学版」场景变体 scenario_teaching/
+生成「现实供需形态教学版」场景 scenario/（应用默认导入目录）
 （契约 V1.3.1 配套教学数据 · V3）。
 
 动机（老师评审反馈）：
-    默认样例 scenario/ 逐时段恰好平衡（±0.02 MW），P4 图上每个时段
+    平衡锚点 scenario_balanced/ 逐时段恰好平衡（±0.02 MW），P4 图上每个时段
     都是"两侧封口竖线重合"——真实市场不会这样，教学效果失真。
 
 设计演变：
@@ -25,19 +25,19 @@
 
 用法：
     python gen_teaching_variant.py
-    （需要 ../curves/load_curve.csv 计算系数，../scenario/ 为数据源）
+    （需要 ../curves/load_curve.csv 计算系数，../scenario_balanced/ 为数据源）
 
 可回溯性：
     除购电申报量按上式缩放外，行、列、价格与 scenario/ 完全一致；
-    系数公式确定性、可复算。默认 scenario/ 不动（对拍锚点 + 测试基准）。
+    系数公式确定性、可复算。平衡锚点 scenario_balanced/ 不动（对拍锚点 + 测试基准）。
 """
 import csv
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SRC = HERE / "scenario"
+SRC = HERE / "scenario_balanced"
 CURVES = HERE / "curves"
-DST = HERE / "scenario_teaching"
+DST = HERE / "scenario"
 
 BASE_FACTOR = 0.96    # 常态需求系数：留 4% 备用裕度（供大于求形态）
 PEAK_EXTRA = 0.13     # 峰值附加：负荷顶点时需求超供给约 9%（稀缺形态）

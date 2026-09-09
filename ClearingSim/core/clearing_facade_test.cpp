@@ -67,8 +67,8 @@ bool loadScenario(const QString &repoRoot, MarketData &market, QStringList &erro
 {
     const QString base = repoRoot + QStringLiteral("/data/samples");
     DataFileSet files;
-    files.generatorBidsFile = base + QStringLiteral("/scenario/generator_bids.csv");
-    files.consumerBidsFile = base + QStringLiteral("/scenario/consumer_bids.csv");
+    files.generatorBidsFile = base + QStringLiteral("/scenario_balanced/generator_bids.csv");
+    files.consumerBidsFile = base + QStringLiteral("/scenario_balanced/consumer_bids.csv");
     files.loadCurveFile = base + QStringLiteral("/curves/load_curve.csv");
     files.renewableOutputFile = base + QStringLiteral("/curves/renewable_output.csv");
     return DataReader::readAll(files, market, errors);
