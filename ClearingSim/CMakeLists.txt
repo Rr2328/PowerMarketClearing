@@ -2,54 +2,37 @@ cmake_minimum_required(VERSION 3.19)
 
 project(ClearingSim LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS
-    Core
-    Widgets
-    Charts
-)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Charts)
 
 qt_standard_project_setup()
 
-
 # 主程序
-
 qt_add_executable(ClearingSim
     WIN32 MACOSX_BUNDLE
-
     main.cpp
     mainwindow.cpp
     mainwindow.h
-
     data/data_reader.h
     data/data_reader.cpp
-
+    data/csv_utils.h
+    data/csv_utils.cpp
+    data/data_validator.h
+    data/data_validator.cpp
     data/scenario_manager.h
     data/scenario_manager.cpp
 )
 
-target_link_libraries(ClearingSim
-    PRIVATE
-        Qt::Core
-        Qt::Widgets
-        Qt::Charts
-)
-
+target_link_libraries(ClearingSim PRIVATE Qt::Core Qt::Widgets Qt::Charts)
 
 if(MSVC)
-    target_compile_options(
-        ClearingSim
-        PRIVATE
-        /utf-8
-    )
+    target_compile_options(ClearingSim PRIVATE /utf-8)
 endif()
 
-
 install(TARGETS ClearingSim
-    BUNDLE  DESTINATION .
+    BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-
 
 qt_generate_deploy_app_script(
     TARGET ClearingSim
@@ -59,91 +42,60 @@ qt_generate_deploy_app_script(
 
 install(SCRIPT ${deploy_script})
 
-
 # DataReader 独立测试
-
 qt_add_executable(DataReaderTest
     data/data_reader_test.cpp
     data/data_reader.cpp
     data/data_reader.h
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
 )
 
-target_link_libraries(DataReaderTest
-    PRIVATE
-        Qt::Core
-)
-
-target_include_directories(DataReaderTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
+target_link_libraries(DataReaderTest PRIVATE Qt::Core)
+target_include_directories(DataReaderTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
 
 if(MSVC)
-    target_compile_options(
-        DataReaderTest
-        PRIVATE
-        /utf-8
-    )
+    target_compile_options(DataReaderTest PRIVATE /utf-8)
 endif()
-
 
 # ScenarioManager 独立测试
-
 qt_add_executable(ScenarioManagerTest
     data/scenario_manager_test.cpp
-
     data/scenario_manager.cpp
     data/scenario_manager.h
-
     data/data_reader.cpp
     data/data_reader.h
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
 )
 
-target_link_libraries(ScenarioManagerTest
-    PRIVATE
-        Qt::Core
-)
-
-target_include_directories(ScenarioManagerTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
+target_link_libraries(ScenarioManagerTest PRIVATE Qt::Core)
+target_include_directories(ScenarioManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
 
 if(MSVC)
-    target_compile_options(
-        ScenarioManagerTest
-        PRIVATE
-        /utf-8
-    )
+    target_compile_options(ScenarioManagerTest PRIVATE /utf-8)
 endif()
 
-
 # MarketData 集成测试
-
 qt_add_executable(MarketDataIntegrationTest
     data/market_data_integration_test.cpp
-
     data/data_reader.cpp
     data/data_reader.h
-
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/scenario_manager.cpp
     data/scenario_manager.h
 )
 
-target_link_libraries(MarketDataIntegrationTest
-    PRIVATE
-        Qt::Core
-)
-
-target_include_directories(MarketDataIntegrationTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
+target_link_libraries(MarketDataIntegrationTest PRIVATE Qt::Core)
+target_include_directories(MarketDataIntegrationTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
 
 if(MSVC)
-    target_compile_options(
-        MarketDataIntegrationTest
-        PRIVATE
-        /utf-8
-    )
+    target_compile_options(MarketDataIntegrationTest PRIVATE /utf-8)
 endif()

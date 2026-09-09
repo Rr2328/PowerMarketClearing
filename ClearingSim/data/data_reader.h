@@ -11,12 +11,9 @@ struct GeneratorBid
     QString id;
     QString name;
     QString type;
-
     int segment = 0;
-
     double price = 0.0;
     double quantity = 0.0;
-
     int period = 0;
 };
 
@@ -25,12 +22,9 @@ struct ConsumerBid
 {
     QString id;
     QString name;
-
     int segment = 0;
-
     double price = 0.0;
     double quantity = 0.0;
-
     int period = 0;
 };
 
@@ -39,7 +33,6 @@ struct LoadPoint
 {
     int period = 0;
     QString time;
-
     double load = 0.0;
 };
 
@@ -48,9 +41,7 @@ struct RenewableOutput
 {
     QString generatorId;
     QString generatorType;
-
     int period = 0;
-
     double output = 0.0;
 };
 
