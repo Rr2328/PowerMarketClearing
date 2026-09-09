@@ -2180,10 +2180,15 @@ void MainWindow::refreshChartPage()
         if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
             // 二次曲线模式（选题 2026v2 (10) 问）：供给 = 平滑 MC 包络曲线
             //   P(λ) = Σ clamp((λ−b)/2a, 0, pMax)，新能源 0 价水平段置于曲线起点；
-            //   需求 = 固定净负荷竖线（选题简化假设：用户侧固定用电量）。
-            //   出清点 = 竖线与曲线交点，出清价 = 交点纵坐标 λ*。
+            //   需求 = 净负荷竖线，出清点 = 竖线与曲线交点，出清价 = 交点纵坐标 λ*。
+            // V1.3.3：需求口径必须与引擎一致——Σ购电申报量(t) 优先、负荷曲线回退。
+            //   此前画图取负荷曲线优先，而引擎取申报总量，两者偏差时竖线与
+            //   出清价虚线不交于一点（交点 ≠ λ*）；样例数据逐时段申报总量
+            //   与负荷曲线本就存在小额偏差，编辑申报后偏差更大。
             const auto ps = MarketView::periodSums(m_session.market, chartPeriod);
-            const double load = ps.loadFound ? ps.loadMW : ps.conMW;
+            const double load = ps.conMW > 0.0
+                                    ? ps.conMW
+                                    : (ps.loadFound ? ps.loadMW : 0.0);
             const double renewCap = ClearingFacade::renewCapacityAt(
                 m_session.market, chartPeriod, m_session.renewPercent / 100.0);
             const double renewActual =
