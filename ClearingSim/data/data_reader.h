@@ -5,6 +5,8 @@
 #include <QStringList>
 #include <QVector>
 
+#include "../quadratic_clearing.h"
+
 // 发电侧申报数据（V1.3 长表口径）
 //   每条 = 电厂×机组 在某交易时段某申报段的申报；
 //   主体身份 = (name=电厂名称, id=机组编号) 组合（机组编号可跨厂重号）。
@@ -72,12 +74,17 @@ struct MarketData
     QVector<LoadPoint> loadCurve;
     QVector<RenewableOutput> renewableOutputs;
 
+    // 二次成本机组参数（可选：generator_quadratic.csv 提供时启用二次模式，
+    // 选题 2026v2 (10) 问；行 = 机组，全天一条曲线，非逐时段申报）
+    QVector<QuadraticGenerator> quadraticGens;
+
     void clear()
     {
         generatorBids.clear();
         consumerBids.clear();
         loadCurve.clear();
         renewableOutputs.clear();
+        quadraticGens.clear();
     }
 };
 
@@ -108,6 +115,14 @@ public:
     static bool readRenewableOutput(
         const QString &filePath,
         QVector<RenewableOutput> &data,
+        QStringList &errors);
+
+    // 二次成本机组参数表（可选文件 generator_quadratic.csv）：
+    //   表头 name,id,a,b,c,pMax；行 = 机组（全天一条曲线）。
+    //   文件不存在时返回 false 且不记错误（二次模式仅是未启用）。
+    static bool readQuadraticGenerators(
+        const QString &filePath,
+        QVector<QuadraticGenerator> &data,
         QStringList &errors);
 
     static bool readAll(

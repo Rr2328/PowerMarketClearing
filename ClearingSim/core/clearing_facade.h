@@ -74,6 +74,15 @@ public:
     static ClearingResult clearPeriods(const MarketData &market, int periodCount,
                                        double penetration, const QString &mode);
 
+    // 二次曲线模式（选题 2026v2 (10) 问）：
+    //   发电侧以 C(P)=aP²+bP+c 二次曲线申报、用户侧固定需求（负荷口径）。
+    //   复用与分段模式完全相同的渗透率换算 renewCapacityAt，
+    //   净负荷 D(t) = max(0, 负荷(t) − P_re(t)) 送二分出清。
+    //   market.quadraticGens 为空时返回空结果（模式未启用）。
+    //   mode 固定记 "QUAD"；periodCount 聚合口径与 clearPeriods 一致。
+    static ClearingResult clearPeriodsQuadratic(const MarketData &market,
+                                                int periodCount, double penetration);
+
 private:
     // 单个时段的出清核心：构造真引擎入参 → ClearMarket → 聚合为 PeriodResult
     static PeriodResult clearOne(const MarketData &market, int period,

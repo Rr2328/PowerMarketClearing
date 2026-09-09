@@ -300,3 +300,133 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
 
     return out;
 }
+
+// ------------------------------------------------------------------
+// 二次曲线模式（选题 2026v2 (10) 问）
+//   发电侧 C(P)=aP²+bP+c 连续申报，用户侧固定需求（负荷口径，选题简化）。
+//   与分段模式共用渗透率换算（契约 §5.3 同式）：
+//     P_re(t) = 渗透率 × 负荷(t)（无曲线回退购电申报总量），
+//     净负荷 D(t) = max(0, 负荷(t) − P_re(t)) → 二分出清 λ*。
+//   结算口径（MCP 同构）：统一出清价结算——
+//     发电侧收入 = λ* × P_i，新能源 0 价段收入 = λ* × P_re，
+//     购电侧按申报量占比分摊 λ* × 负荷(t)。
+//   需求超 ΣpMax → 稀缺封顶（衔接 V1.3.1）：λ 顶到最高边际成本 + shortfall。
+// ------------------------------------------------------------------
+ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData &market,
+                                                     int periodCount, double penetration)
+{
+    ClearingResult result;
+    result.mode = QStringLiteral("QUAD");
+    result.sourceName = QStringLiteral("二次曲线出清 · 二分边际定价");
+
+    if (market.quadraticGens.isEmpty())
+        return result; // 模式未启用（未提供 generator_quadratic.csv）
+
+    // 96 期逐时段原始出清
+    QVector<PeriodResult> raw;
+    raw.reserve(96);
+    for (int period = 1; period <= 96; ++period) {
+        // 需求基准：负荷(t)，无曲线回退购电申报总量（与渗透率换算同一基准）
+        double load = loadAt(market, period);
+        if (load < 0.0)
+            load = totalDemandAt(market, period);
+
+        const double renewCap = renewCapacityAt(market, period, penetration);
+        const double renewActual = std::min(renewCap, std::max(0.0, load));
+        const double netLoad = std::max(0.0, load - renewActual);
+
+        const QuadraticClearResult qr =
+            quadraticClearing(market.quadraticGens, netLoad);
+
+        PeriodResult out;
+        out.period = period;
+        out.time = periodTime(period, 96);
+        out.loadMW = load;
+        out.renewMW = renewActual;
+        out.clearingPrice = qr.clearingPrice;
+        out.clearedMW = renewActual + qr.totalVolume;
+
+        // 发电侧明细：新能源 0 价段 + 各二次机组
+        if (renewActual > 0.0) {
+            EntityCleared re;
+            re.id = QStringLiteral("RENEW");
+            re.name = QStringLiteral("新能源出力");
+            re.segment = 0;
+            re.bidPrice = 0.0;
+            re.clearedMW = renewActual;
+            re.money = renewActual * qr.clearingPrice;
+            out.genDetails.append(re);
+        }
+        for (const auto &d : qr.dispatch) {
+            EntityCleared e;
+            e.id = d.id;
+            e.name = d.name;
+            e.segment = 1;
+            e.bidPrice = d.marginalCost;   // 边际成本申报口径
+            e.clearedMW = d.output;
+            e.money = d.output * qr.clearingPrice;
+            out.genDetails.append(e);
+        }
+
+        // 购电侧：固定需求按申报量占比分摊
+        double conSum = 0.0;
+        for (const auto &c : market.consumerBids) {
+            if (c.period == period || c.period <= 0)
+                conSum += c.quantity;
+        }
+        if (conSum > 0.0) {
+            for (const auto &c : market.consumerBids) {
+                if (!(c.period == period || c.period <= 0))
+                    continue;
+                EntityCleared e;
+                e.id = c.id;
+                e.name = c.name;
+                e.segment = c.segment;
+                e.bidPrice = qr.clearingPrice;   // 统一出清价结算
+                e.clearedMW = load * (c.quantity / conSum);
+                e.money = e.clearedMW * qr.clearingPrice;
+                out.conDetails.append(e);
+            }
+        }
+
+        for (const auto &e : out.genDetails)
+            out.genFee += e.money;
+        for (const auto &e : out.conDetails)
+            out.conFee += e.money;
+
+        raw.append(out);
+    }
+
+    // 24 期聚合（口径与 clearPeriods 完全一致）
+    if (periodCount == 24) {
+        for (int hour = 1; hour <= 24; ++hour) {
+            PeriodResult agg;
+            agg.period = hour;
+            agg.time = periodTime(hour, 24);
+
+            int peakIdx = -1;
+            double priceSum = 0.0, loadSum = 0.0, renewSum = 0.0, volSum = 0.0;
+            for (int q = 0; q < 4; ++q) {
+                const PeriodResult &pr = raw[(hour - 1) * 4 + q];
+                priceSum += pr.clearingPrice;
+                loadSum += pr.loadMW;
+                renewSum += pr.renewMW;
+                volSum += pr.clearedMW;
+                agg.genFee += pr.genFee;
+                agg.conFee += pr.conFee;
+                if (peakIdx < 0 || pr.clearingPrice > raw[(hour - 1) * 4 + peakIdx].clearingPrice)
+                    peakIdx = q;
+            }
+            agg.clearingPrice = priceSum / 4.0;
+            agg.loadMW = loadSum / 4.0;
+            agg.renewMW = renewSum / 4.0;
+            agg.clearedMW = volSum / 4.0;
+            agg.genDetails = raw[(hour - 1) * 4 + peakIdx].genDetails;
+            agg.conDetails = raw[(hour - 1) * 4 + peakIdx].conDetails;
+            result.periods.append(agg);
+        }
+    } else {
+        result.periods = raw;
+    }
+    return result;
+}

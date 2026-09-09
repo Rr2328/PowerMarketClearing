@@ -22,6 +22,10 @@ struct AppSession
     double renewPercent = 20.0;        // P2 渗透率滑块：0~100%，默认 20%（V1.3 §5.3，
                                       // P_re(t)=渗透率×负荷(t)，撮合与供需图同式换算）
 
+    bool quadraticMode = false;        // 申报形式：false=分段报价（默认）/ true=二次成本曲线
+                                      // （选题 2026v2 (10) 问；仅当导入数据带
+                                      // generator_quadratic.csv 时可勾选）
+
     Perspective perspective = Perspective::Platform;   // 当前视角
 
     QString dataSource;                // 数据源描述（内置基准例/内置场景/自定义）

@@ -9,6 +9,7 @@
 #include <QResizeEvent>
 
 #include <QButtonGroup>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDate>
@@ -579,6 +580,20 @@ QWidget *MainWindow::buildControlPage()
     });
     form->addRow(QStringLiteral("新能源渗透率："), sliderRow);
 
+    // 申报形式切换（选题 2026v2 (10) 问）：分段报价 / 二次成本曲线
+    auto *quadCheck = new QCheckBox(QStringLiteral("二次曲线申报模式（C(P)=aP²+bP+c，需数据目录含 generator_quadratic.csv）"));
+    quadCheck->setChecked(m_session.quadraticMode);
+    quadCheck->setToolTip(QStringLiteral(
+        "发电侧以二次成本曲线申报、用户侧固定需求（负荷口径）：\n"
+        "出清价 λ* 满足 Σ P_i(λ*) = 净负荷，二分搜索求得（统一边际出清的连续版）。\n"
+        "仅当导入数据目录含 generator_quadratic.csv 时生效，否则回退分段撮合。"));
+    connect(quadCheck, &QCheckBox::toggled, this, [this](bool on) {
+        m_session.quadraticMode = on;
+        if (m_session.hasResult && m_session.hasData)
+            rerunIfReady();
+    });
+    form->addRow(QStringLiteral("申报形式："), quadCheck);
+
     m_paramSummary = new QLabel();
     m_paramSummary->setObjectName("paramSummary");
     auto refreshSummary = [this] {
@@ -1068,6 +1083,14 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     if (!renewFile.isEmpty() && QFile::exists(renewFile))
         ok = DataReader::readRenewableOutput(renewFile, d.renewableOutputs, errs) && ok;
 
+    // 可选：二次成本机组参数（同目录 generator_quadratic.csv，存在才启用二次模式，
+    // 选题 2026v2 (10) 问；读取失败仅提示，不阻断主流程）
+    const QString quadFile =
+        QFileInfo(genFile.isEmpty() ? conFile : genFile).absoluteDir()
+            .filePath(QStringLiteral("generator_quadratic.csv"));
+    if (QFile::exists(quadFile))
+        DataReader::readQuadraticGenerators(quadFile, d.quadraticGens, errs);
+
     if (!ok) {
         m_checkErrors = errs;
         renderCheckBar();
@@ -1196,8 +1219,14 @@ void MainWindow::runClearing()
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
 
     // 出清（B 位真实引擎外壳，每时段 = 购电申报总量 + 渗透率×负荷的新能源）
-    m_session.result = ClearingFacade::clearPeriods(
-        m_session.market, periodCount, m_session.renewPercent / 100.0, mode);
+    // 二次曲线模式（选题 (10) 问）：勾选且导入数据带二次参数时走二分出清
+    if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        m_session.result = ClearingFacade::clearPeriodsQuadratic(
+            m_session.market, periodCount, m_session.renewPercent / 100.0);
+    } else {
+        m_session.result = ClearingFacade::clearPeriods(
+            m_session.market, periodCount, m_session.renewPercent / 100.0, mode);
+    }
     m_session.hasResult = true;
 }
 
@@ -1809,9 +1838,50 @@ void MainWindow::refreshChartPage()
             m_session.market, chartPeriod);
 
         double cumG = 0.0, cumC = 0.0, maxPrice = 0.0;
+
+        if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+            // 二次曲线模式（选题 2026v2 (10) 问）：供给 = 平滑 MC 包络曲线
+            //   P(λ) = Σ clamp((λ−b)/2a, 0, pMax)，新能源 0 价水平段置于曲线起点；
+            //   需求 = 固定净负荷竖线（选题简化假设：用户侧固定用电量）。
+            //   出清点 = 竖线与曲线交点，出清价 = 交点纵坐标 λ*。
+            const auto ps = MarketView::periodSums(m_session.market, chartPeriod);
+            const double load = ps.loadFound ? ps.loadMW : ps.conMW;
+            const double renewCap = ClearingFacade::renewCapacityAt(
+                m_session.market, chartPeriod, m_session.renewPercent / 100.0);
+            const double renewActual =
+                std::min(renewCap, std::max(0.0, load));
+
+            double mcMax = 1.0, pMaxSum = 0.0;
+            for (const auto &g : m_session.market.quadraticGens) {
+                // a≈0 的恒定边际成本机组：λ 达到 b 即全程顶格
+                mcMax = std::max(mcMax, 2.0 * g.a * g.pMax + g.b);
+                pMaxSum += g.pMax;
+            }
+            maxPrice = mcMax * 1.10;
+
+            m_supplySeries->append(0.0, 0.0);
+            m_supplySeries->append(renewActual, 0.0);   // 新能源 0 价段
+            constexpr int kSteps = 120;
+            for (int i = 1; i <= kSteps; ++i) {
+                const double lam = mcMax * i / kSteps;
+                double total = 0.0;
+                for (const auto &g : m_session.market.quadraticGens) {
+                    const double pi = g.a > 1e-9 ? (lam - g.b) / (2.0 * g.a)
+                                                 : (lam >= g.b ? g.pMax : 0.0);
+                    total += std::clamp(pi, 0.0, g.pMax);
+                }
+                m_supplySeries->append(renewActual + total, lam);
+            }
+            cumG = renewActual + pMaxSum;
+
+            cumC = std::max(0.0, load - renewActual);   // 净负荷（竖线横坐标 = load）
+            if (load > 0.0) {
+                m_demandSeries->append(load, 0.0);
+                m_demandSeries->append(load, maxPrice);
+            }
+        } else {
         for (const auto &s : gen) maxPrice = std::max(maxPrice, s.price);
         for (const auto &s : con) maxPrice = std::max(maxPrice, s.price);
-
         // 供给阶梯：每段画一条水平线（价格=该段申报价），段与段之间竖直跳变。
         //   从第一段报价起画（不从原点 0,0 出发）：每个申报段补两个点 = 水平线起点 + 终点，
         //   下一段的起点与前一段终点自动连成竖直跳变线，形成标准阶梯图。
@@ -1834,6 +1904,9 @@ void MainWindow::refreshChartPage()
             m_demandSeries->append(cumC, 0.0);
         if (!gen.isEmpty())
             m_supplySeries->append(cumG, kPriceCap);
+        maxPrice = std::max(maxPrice, kPriceCap);
+        }
+
         const double maxX = std::max(cumG, cumC) * 1.05;
 
         // 出清价水平线 + 出清点标记（#89：按所选时段映射出清结果；

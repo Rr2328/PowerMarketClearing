@@ -2032,3 +2032,126 @@ bool DataReader::validateRelations(
 
     return true;
 }
+
+// ------------------------------------------------------------------
+// 二次成本机组参数表（generator_quadratic.csv，可选文件）
+//   表头 name,id,a,b,c,pMax；行 = 机组（二次参数是机组物理属性，
+//   全天一条曲线，非逐时段申报）。选题 2026v2 (10) 问配套。
+//   文件不存在 → 返回 false 且不记错误（调用方据此判定二次模式未启用）。
+// ------------------------------------------------------------------
+bool DataReader::readQuadraticGenerators(
+    const QString &filePath,
+    QVector<QuadraticGenerator> &data,
+    QStringList &errors)
+{
+    data.clear();
+
+    QFile file(filePath);
+
+    if (!file.exists())
+    {
+        // 可选文件：不存在不是错误
+        return false;
+    }
+
+    if (!file.open(
+            QIODevice::ReadOnly |
+            QIODevice::Text))
+    {
+        addError(
+            errors,
+            QStringLiteral("二次机组参数"),
+            "文件无法打开：" + filePath);
+
+        return false;
+    }
+
+    QTextStream in(&file);
+
+    if (in.atEnd())
+    {
+        addError(
+            errors,
+            QStringLiteral("二次机组参数"),
+            "CSV 文件为空：" + filePath);
+
+        return false;
+    }
+
+    const QStringList header =
+        splitCsvLine(
+            in.readLine().trimmed());
+
+    const QStringList expectedHeader = {
+        QStringLiteral("name"),
+        QStringLiteral("id"),
+        QStringLiteral("a"),
+        QStringLiteral("b"),
+        QStringLiteral("c"),
+        QStringLiteral("pMax")
+    };
+
+    if (header != expectedHeader)
+    {
+        addError(
+            errors,
+            QStringLiteral("二次机组参数"),
+            "表头不符，期望 name,id,a,b,c,pMax：" + filePath);
+
+        return false;
+    }
+
+    while (!in.atEnd())
+    {
+        const QString line =
+            in.readLine().trimmed();
+
+        if (line.isEmpty())
+        {
+            continue;
+        }
+
+        const QStringList columns =
+            splitCsvLine(line);
+
+        if (columns.size() < 6)
+        {
+            addError(
+                errors,
+                QStringLiteral("二次机组参数"),
+                QString("行 %1 列数不足（需 6 列）")
+                    .arg(line));
+
+            continue;
+        }
+
+        QuadraticGenerator gen;
+
+        gen.name = columns[0];
+        gen.id = columns[1];
+
+        bool ok = true;
+        gen.a = columns[2].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("二次机组参数"), "a 读取失败：" + line); continue; }
+        gen.b = columns[3].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("二次机组参数"), "b 读取失败：" + line); continue; }
+        gen.c = columns[4].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("二次机组参数"), "c 读取失败：" + line); continue; }
+        gen.pMax = columns[5].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("二次机组参数"), "pMax 读取失败：" + line); continue; }
+
+        if (gen.a < 0.0 || gen.pMax < 0.0)
+        {
+            addError(
+                errors,
+                QStringLiteral("二次机组参数"),
+                "a / pMax 不可为负：" + line);
+
+            continue;
+        }
+
+        data.append(gen);
+    }
+
+    return !data.isEmpty();
+}

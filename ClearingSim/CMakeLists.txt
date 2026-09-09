@@ -36,6 +36,9 @@ qt_add_executable(ClearingSim
     core/clearing_facade.cpp
     core/market_view.h
     core/market_view.cpp
+
+    quadratic_clearing.h
+    quadratic_clearing.cpp
 )
 
 target_include_directories(ClearingSim
@@ -126,6 +129,8 @@ qt_add_executable(ClearingFacadeTest
     engine/clearing_engine.cpp
     data/data_reader.h
     data/data_reader.cpp
+    quadratic_clearing.h
+    quadratic_clearing.cpp
 )
 
 target_link_libraries(ClearingFacadeTest
@@ -153,6 +158,8 @@ qt_add_executable(DataPipelineIntegrationTest
     core/clearing_facade.h
     engine/clearing_engine.cpp
     engine/clearing_engine.h
+    quadratic_clearing.h
+    quadratic_clearing.cpp
 )
 
 target_link_libraries(DataPipelineIntegrationTest
@@ -190,12 +197,39 @@ add_test(NAME ScenarioManagerTest     COMMAND ScenarioManagerTest)
 add_test(NAME ClearingFacadeTest      COMMAND ClearingFacadeTest)
 add_test(NAME DataPipelineIntegrationTest COMMAND DataPipelineIntegrationTest)
 
+# 二次曲线出清测试（选题 2026v2 (10) 问）
+
+qt_add_executable(QuadraticClearingTest
+    quadratic_clearing_test.cpp
+    quadratic_clearing.h
+    quadratic_clearing.cpp
+    data/data_reader.h
+    data/data_reader.cpp
+    core/clearing_facade.h
+    core/clearing_facade.cpp
+    engine/clearing_engine.h
+    engine/clearing_engine.cpp
+)
+
+target_link_libraries(QuadraticClearingTest
+    PRIVATE
+        Qt::Core
+)
+
+target_include_directories(QuadraticClearingTest
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+add_test(NAME QuadraticClearingTest COMMAND QuadraticClearingTest)
+
 # 让 Windows 控制台输出也走 stderr（IDE/Test Explorer 看得到）
 set_tests_properties(
     DataReaderTest
     ScenarioManagerTest
     ClearingFacadeTest
     DataPipelineIntegrationTest
+    QuadraticClearingTest
     PROPERTIES
     ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1"
 )
