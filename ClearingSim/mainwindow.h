@@ -49,6 +49,7 @@ private slots:
     void onClearData();     // P1：清空数据
     void onBidItemChanged(QTableWidgetItem *item);   // P1：申报表编辑写回 + 自动重算（#82）
     void onQuadParamChanged(QTableWidgetItem *item); // P1：二次模式发电侧参数表（a/b/c/pMax）编辑写回（V1.3.2）
+    void onQuadLoadChanged(QTableWidgetItem *item);  // P1：二次模式购电侧固定负荷表（用电量可调、占比联动）编辑写回（V1.3.2）
     void onEditPeriodChanged(int index);   // P1：交易时段下拉切换 → 单时段小表刷新（#89）
     void onPrefillByLoad();                // P1：按负荷曲线预填当前时段申报量（#89）
     void onBidFormChanged();               // P1：申报形式切换 → 按新形式重载当前数据源（V1.3.2）

@@ -1490,8 +1490,10 @@ void MainWindow::refreshImportPage()
                 m_conTable->setItem(row, 1, lockedItem(c.id));
                 m_conTable->setItem(row, 2, lockedItem(
                     QStringLiteral("%1%").arg(share * 100.0, 0, 'f', 1)));
-                m_conTable->setItem(row, 3, lockedItem(
-                    QString::number(load * share, 'f', 1)));
+                auto *loadItem = new QTableWidgetItem(
+                    QString::number(load * share, 'f', 1));
+                loadItem->setData(Qt::UserRole, i);   // 源索引 → consumerBids[i]（见 onQuadLoadChanged）
+                m_conTable->setItem(row, 3, loadItem);
                 ++row;
             }
             m_loadingBids = false;
@@ -1505,7 +1507,7 @@ void MainWindow::refreshImportPage()
     if (m_importTabs) {
         m_importTabs->setTabText(0, quadForm ? QStringLiteral("发电侧成本曲线（a/b/c/pMax 可调）")
                                              : QStringLiteral("发电侧申报"));
-        m_importTabs->setTabText(1, quadForm ? QStringLiteral("购电侧固定负荷（不报价）")
+        m_importTabs->setTabText(1, quadForm ? QStringLiteral("购电侧固定负荷（用电量可调）")
                                              : QStringLiteral("购电侧申报"));
     }
     if (m_genCardName)
@@ -1517,7 +1519,7 @@ void MainWindow::refreshImportPage()
                                    : QStringLiteral("generator_bids.csv"));
     if (m_formHint)
         m_formHint->setText(quadForm
-            ? QStringLiteral("选题 2026v2 第 (10) 问扩展：发电侧申报连续成本特性，出清价 λ* 由边际成本曲线与固定净负荷的交点确定（用户侧按题设为固定用电量）。")
+            ? QStringLiteral("选题 2026v2 第 (10) 问扩展：发电侧申报连续成本特性，出清价 λ* 由边际成本曲线与固定净负荷的交点确定。用户侧按题设不报价：总用电量固定为负荷(t)，可调各用户的用电量（占比联动，其余用户等比调整）。")
             : QStringLiteral("现行现货市场申报口径：双侧分段报价阶梯撮合，出清价由边际段决定。"));
     if (m_bidFormLabel)
         m_bidFormLabel->setText(quadForm
@@ -1612,6 +1614,11 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     // V1.3.2：二次模式发电侧表为成本曲线参数表（a/b/c/pMax），列语义与分段表完全不同
     if (isGen && m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
         onQuadParamChanged(item);
+        return;
+    }
+    // V1.3.2：二次模式购电侧表为固定负荷表（用电量可调、占比联动），语义与分段表不同
+    if (!isGen && m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        onQuadLoadChanged(item);
         return;
     }
     const int col = item->column();
@@ -1768,6 +1775,73 @@ void MainWindow::onQuadParamChanged(QTableWidgetItem *item)
     } else {
         statusBar()->showMessage(
             QStringLiteral("成本曲线已修改（尚未出清，可在②仿真控制点击「开始仿真」）"), 5000);
+    }
+}
+
+// ============================================================
+// V1.3.2 P1：二次模式购电侧固定负荷表编辑写回（col 3 = 本时段用电量）
+//   题设：总用电量固定为负荷(t)——修改某用户用电量后，其余用户按
+//   申报占比等比调整（总量不变，仅改分配）。写回方式：反解申报量
+//   q_i = val × 申报总量 / 负荷(t)，使占比产生目标用电量；
+//   无负荷曲线时回退「用电量 = 申报量」（与出清回退口径一致）
+// ============================================================
+void MainWindow::onQuadLoadChanged(QTableWidgetItem *item)
+{
+    if (item->column() != 3)          // 仅用电量列可编辑（占比列只读联动）
+        return;
+    const int idx = item->data(Qt::UserRole).toInt();
+    if (idx < 0 || idx >= m_session.market.consumerBids.size())
+        return;
+    auto &c = m_session.market.consumerBids[idx];
+
+    const auto fail = [&](const QString &msg) {
+        refreshImportPage();          // 从状态重建表格 → 回退非法输入
+        statusBar()->showMessage(msg, 6000);
+    };
+
+    bool ok = false;
+    const double val = item->text().toDouble(&ok);
+    if (!ok)
+        return fail(QStringLiteral("输入无效：请填写数字（如 230.6）"));
+    if (val < 0.0)
+        return fail(QStringLiteral("用电量需为非负数"));
+
+    const auto sums = MarketView::periodSums(m_session.market, m_editPeriod);
+    double conSum = 0.0;
+    for (const auto &b : m_session.market.consumerBids)
+        if (b.period == m_editPeriod || b.period <= 0)
+            conSum += b.quantity;
+
+    if (sums.loadFound && sums.loadMW > 0.0) {
+        if (val > sums.loadMW + 1e-6)
+            return fail(QStringLiteral("总用电量固定为负荷(t) = %1 MW，单用户用电量不能超过它")
+                            .arg(sums.loadMW, 0, 'f', 1));
+        if (conSum <= 0.0)
+            return fail(QStringLiteral("购电申报总量为 0，无法按占比分摊，请检查购电侧 CSV"));
+        const double newQty = val * conSum / sums.loadMW;   // 反解申报量
+        if (qFuzzyCompare(newQty + 1.0, c.quantity + 1.0)) {
+            refreshImportPage();      // 数值未变（仅文本差异）→ 恢复显示
+            return;
+        }
+        c.quantity = newQty;
+    } else {
+        // 无负荷曲线：用电量即申报量（facade 回退口径）
+        if (qFuzzyCompare(val + 1.0, c.quantity + 1.0))
+            return;
+        c.quantity = val;
+    }
+
+    refreshImportPage();              // 占比列与其余用户用电量联动刷新
+
+    if (m_session.hasResult && m_session.hasData) {
+        rerunIfReady();
+        statusBar()->showMessage(
+            QStringLiteral("购电分配已调整：总用电量固定为负荷(t) %1 MW，其余用户按占比等比调整；出清价由成本曲线与净负荷决定，分配方式不影响价格")
+                .arg(sums.loadFound ? sums.loadMW : conSum, 0, 'f', 1),
+            6000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("购电分配已调整（尚未出清，可在②仿真控制点击「开始仿真」）"), 5000);
     }
 }
 
