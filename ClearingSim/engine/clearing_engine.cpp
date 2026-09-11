@@ -1,19 +1,14 @@
 #include "clearing_engine.h"
 #include<algorithm>
-#include<QHash>
 #include<QDebug>
 
 ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
-{   
+{
     ClearResult clearresult;
     std::sort(consumers.begin(),consumers.end(),[](const Consumer &a, const Consumer &b){return a.price > b.price;});
     std::sort(generators.begin(),generators.end(),[](const Generator &a,const Generator &b){return a.price<b.price;});
     int gindex=0;
     int cindex=0;
-    QVector<double>volumn;
-    for (int i = 0; i < generators.size(); ++i) {
-        volumn.append(generators[i].capacity);
-    }
     constexpr double EPS = 1e-9;
     if (generators.isEmpty() || consumers.isEmpty()) {
         qDebug() << "出清失败：发电侧或购电侧为空";
@@ -38,74 +33,21 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
         consumers[cindex].demand-=tradevolume;
         if(generators[gindex].capacity<=EPS)gindex++;
         if(consumers[cindex].demand<=EPS)cindex++;
-        /*if(generators[gindex].capacity+EPS<consumers[cindex].demand)
-        {
-            consumers[cindex].demand-=generators[gindex].capacity;
-            clearresult.totalvolume+=generators[gindex].capacity;
-            generators[gindex].capacity=0;
-            gindex++;
-        }
-        else if(qAbs(generators[gindex].capacity-consumers[cindex].demand) <= EPS)
-        {
-            consumers[cindex].demand-=generators[gindex].capacity;
-            clearresult.totalvolume+=generators[gindex].capacity;
-            generators[gindex].capacity=0;
-            gindex++;
-            cindex++;
-        }
-        else
-        {
-            generators[gindex].capacity-=consumers[cindex].demand;
-            clearresult.totalvolume+=consumers[cindex].demand;
-            consumers[cindex].demand=0;
-            cindex++;
-        }*/
     }
-    /*if(gindex<generators.size())
-    {
-        if(gindex==0&&cindex==0&&generators[gindex].capacity==volumn[gindex])
-        {
-            qDebug()<<"发电机报价均大于用户侧报价！";
-        }
-        else
-        {
-            if(generators[gindex].capacity!=volumn[gindex])clearresult.clearingprice=generators[gindex].price;
-            else clearresult.clearingprice=generators[gindex-1].price;
-        }
-    }
+    // V1.3.1 稀缺封顶（契约 §7.3-2，老师评审反馈）：
+    //   仅当供给侧申报全部用尽（gindex 走到头）且未满足需求 > 0.5 MW 时，
+    //   统一出清价升到限价 540——供给量尽 → 价格竖直升至限价的稀缺语义。
+    //   若循环因"供给要价 > 剩余需求报价"终止（价格不交叉、双侧均有剩余），
+    //   维持边际供给定价：此时需求封口线仍与供给水平段相交，图形自洽。
+    //   容差 0.5 MW：默认样例逐时段供需差仅 ±0.02 MW（舍入级），不得误触发。
+    double residualDemand = 0.0;
+    for (const Consumer &c : consumers)
+        residualDemand += c.demand;
+    constexpr double kDemandTol = 0.5;    // MW
+    constexpr double kPriceCap  = 540.0;  // 总则规则④：双侧统一限价
+    if (gindex >= generators.size() && residualDemand > kDemandTol)
+        clearresult.clearingprice = kPriceCap;
     else
-    {
-        clearresult.clearingprice=generators[gindex-1].price;
-        if(cindex<=consumers.size()-1&&consumers[cindex].demand>EPS)qDebug()<<"用户侧还需要电！";
-    }*/
-    clearresult.clearingprice=lastprice;
+        clearresult.clearingprice = lastprice;
     return clearresult;
-}
-QVector<SettlementItem> settle(const ClearResult& clearresult,SettlementMode mode)
-{
-    QVector<SettlementItem>settlement;
-    QHash<QString,SettlementItem>list;
-    for(const auto& trade:clearresult.trade)
-    {
-        double money;
-        if(mode==SettlementMode::MCP)
-        {
-            money =trade.volume*clearresult.clearingprice;
-        }
-        else
-        {
-            money =trade.volume*trade.generatorprice;
-        }
-        list[trade.generatorID].id=trade.generatorID;
-        list[trade.generatorID].volume+=trade.volume;
-        list[trade.generatorID].amount+=money;
-        list[trade.consumerID].id=trade.consumerID;
-        list[trade.consumerID].amount+=trade.volume*clearresult.clearingprice;
-        list[trade.consumerID].volume+=trade.volume;
-    }
-    for(auto& settle:list)
-    {
-        settlement.append(settle);
-    }
-    return settlement;
 }

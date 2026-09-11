@@ -34,22 +34,8 @@ struct ClearResult//出清结果
     double clearingprice=0.0;//出清价格
     double totalvolume=0.0;//总成交电量
     QVector<Trade>trade;
-    //bool supplyShortage=false;
-    //double unmetDemand=0.0;
-    //QString message;
 };
-enum class SettlementMode
-{
-    MCP,
-    PAB
-};
-struct SettlementItem
-{
-    QString id;
-    double volume=0;
-    double amount=0;
-};
-QVector<SettlementItem> settle(const ClearResult& clearresult,SettlementMode mode);
-
+// 注：B 位仅暴露撮合（ClearMarket）。结算由 ClearingFacade 自管（C 接口 EntityCleared），
+//     历史遗留的 settle()/SettlementItem/SettlementMode 已在 #94 清理（全项目无 caller）。
 ClearResult ClearMarket(QVector<Generator>generator,QVector<Consumer>consumer);
 #endif // CLEARING_ENGINE_H

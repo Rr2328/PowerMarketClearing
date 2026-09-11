@@ -31,6 +31,14 @@
 - **开发环境**：Qt Creator / Visual Studio + Qt
 - **版本控制**：Git（Sourcetree 客户端）+ GitHub
 
+## 三·五、第三方依赖
+
+| 依赖 | 版本 | 许可证 | 引入方式 | 用途 |
+| ---- | ---- | ---- | ---- | ---- |
+| [HiGHS](https://github.com/ERGO-Code/HiGHS) | v1.15.1 | MIT | 源码直接放入 `third_party/HiGHS`（vendored） | 线性/混合整数规划求解器，用于 SCUC 机组组合出清模式 |
+
+> 说明：`third_party/HiGHS` 为第三方开源库的快照拷贝，**非本组成员编写的代码**，不计入各成员的 git 使用记录；CMake 通过 `add_subdirectory` 直接编译为静态库，克隆仓库后无需额外步骤即可离线构建。
+
 ## 四、目录结构（规划）
 
 ```

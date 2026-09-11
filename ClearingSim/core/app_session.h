@@ -1,7 +1,7 @@
 #ifndef APP_SESSION_H
 #define APP_SESSION_H
 
-#include "core/fake_engine.h"
+#include "core/clearing_facade.h"
 #include "core/perspective.h"
 
 // ------------------------------------------------------------------
@@ -11,12 +11,24 @@
 // ------------------------------------------------------------------
 struct AppSession
 {
-    MarketData market;                 // A 读入的申报/曲线数据
+    MarketData market;                 // A 读入的申报/曲线数据（可能已被「按负荷预填」缩放）
+    MarketData marketBaseline;         // 加载时的原始快照（预填重置基准，幂等）
     QVector<PeriodScenario> scenarios; // A 构建的逐时段场景
-    ClearingResult result;             // 假引擎/真引擎的出清结果
+    ClearingResult result;             // 出清结果（ClearingFacade 外观 → 真引擎）
 
     bool hasData = false;              // 申报数据是否已导入（驱动 P2 就绪灯）
     bool hasResult = false;            // 出清是否已完成（驱动 P3/P4/P5 空态卡）
+
+    double renewPercent = 20.0;        // P2 渗透率滑块：0~100%，默认 20%（V1.3 §5.3，
+                                      // P_re(t)=渗透率×负荷(t)，撮合与供需图同式换算）
+
+    bool quadraticMode = false;        // 申报形式：false=分段报价（默认）/ true=二次成本曲线
+                                      // （选题 2026v2 (10) 问；仅当导入数据带
+                                      // generator_quadratic.csv 时可勾选）
+
+    bool ucMode = false;               // 出清机制：false=分段撮合（MCP/PAB）/
+                                      // true=SCUC 机组组合（HiGHS 求解器，S4；
+                                      // 仅当导入数据带 generator_meta.csv 时可选）
 
     Perspective perspective = Perspective::Platform;   // 当前视角
 
