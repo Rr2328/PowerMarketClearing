@@ -2,14 +2,9 @@ cmake_minimum_required(VERSION 3.19)
 
 project(ClearingSim LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS
-    Core
-    Widgets
-    Charts
-)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Charts)
 
 qt_standard_project_setup()
-
 
 # HiGHS 求解器（SCUC 机组组合，方案 §五）
 #   MIT 开源、纯 C++、MinGW 兼容；源码在仓库 third_party/HiGHS（浅克隆），
@@ -21,12 +16,9 @@ set(FAST_BUILD             ON  CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/HiGHS
                  ${CMAKE_BINARY_DIR}/third_party/HiGHS)
 
-
 # 主程序
-
 qt_add_executable(ClearingSim
     WIN32 MACOSX_BUNDLE
-
     main.cpp
     mainwindow.cpp
     mainwindow.h
@@ -34,7 +26,10 @@ qt_add_executable(ClearingSim
 
     data/data_reader.h
     data/data_reader.cpp
-
+    data/csv_utils.h
+    data/csv_utils.cpp
+    data/data_validator.h
+    data/data_validator.cpp
     data/scenario_manager.h
     data/scenario_manager.cpp
 
@@ -68,22 +63,15 @@ target_link_libraries(ClearingSim
         highs
 )
 
-
 if(MSVC)
-    target_compile_options(
-        ClearingSim
-        PRIVATE
-        /utf-8
-    )
+    target_compile_options(ClearingSim PRIVATE /utf-8)
 endif()
 
-
 install(TARGETS ClearingSim
-    BUNDLE  DESTINATION .
+    BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
-
 
 qt_generate_deploy_app_script(
     TARGET ClearingSim
@@ -93,46 +81,63 @@ qt_generate_deploy_app_script(
 
 install(SCRIPT ${deploy_script})
 
-
 # DataReader 独立测试
-
 qt_add_executable(DataReaderTest
     data/data_reader_test.cpp
     data/data_reader.cpp
     data/data_reader.h
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
 )
 
-target_link_libraries(DataReaderTest
-    PRIVATE
-        Qt::Core
-)
+target_link_libraries(DataReaderTest PRIVATE Qt::Core)
+target_include_directories(DataReaderTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
 
-target_include_directories(DataReaderTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
-
+if(MSVC)
+    target_compile_options(DataReaderTest PRIVATE /utf-8)
+endif()
 
 # ScenarioManager 独立测试
-
 qt_add_executable(ScenarioManagerTest
     data/scenario_manager_test.cpp
     data/scenario_manager.cpp
     data/scenario_manager.h
     data/data_reader.cpp
     data/data_reader.h
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
 )
 
-target_link_libraries(ScenarioManagerTest
-    PRIVATE
-        Qt::Core
+target_link_libraries(ScenarioManagerTest PRIVATE Qt::Core)
+target_include_directories(ScenarioManagerTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
+
+if(MSVC)
+    target_compile_options(ScenarioManagerTest PRIVATE /utf-8)
+endif()
+
+# MarketData 集成测试（data-model 分支：CSV → DataReader → 场景构建）
+qt_add_executable(MarketDataIntegrationTest
+    data/market_data_integration_test.cpp
+    data/data_reader.cpp
+    data/data_reader.h
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
+    data/scenario_manager.cpp
+    data/scenario_manager.h
 )
 
-target_include_directories(ScenarioManagerTest
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/data
-)
+target_link_libraries(MarketDataIntegrationTest PRIVATE Qt::Core)
+target_include_directories(MarketDataIntegrationTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/data)
 
+if(MSVC)
+    target_compile_options(MarketDataIntegrationTest PRIVATE /utf-8)
+endif()
 
 # ClearingFacade 独立测试（V1.3 对拍：窄表等价性 / 渗透率 / 24 期聚合）
 
@@ -217,6 +222,7 @@ add_test(NAME DataReaderTest          COMMAND DataReaderTest)
 add_test(NAME ScenarioManagerTest     COMMAND ScenarioManagerTest)
 add_test(NAME ClearingFacadeTest      COMMAND ClearingFacadeTest)
 add_test(NAME DataPipelineIntegrationTest COMMAND DataPipelineIntegrationTest)
+add_test(NAME MarketDataIntegrationTest COMMAND MarketDataIntegrationTest)
 
 # 二次曲线出清测试（选题 2026v2 (10) 问）
 
@@ -282,6 +288,7 @@ set_tests_properties(
     ScenarioManagerTest
     ClearingFacadeTest
     DataPipelineIntegrationTest
+    MarketDataIntegrationTest
     QuadraticClearingTest
     PROPERTIES
     ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1"
