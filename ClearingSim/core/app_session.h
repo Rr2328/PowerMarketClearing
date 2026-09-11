@@ -26,6 +26,10 @@ struct AppSession
                                       // （选题 2026v2 (10) 问；仅当导入数据带
                                       // generator_quadratic.csv 时可勾选）
 
+    bool ucMode = false;               // 出清机制：false=分段撮合（MCP/PAB）/
+                                      // true=SCUC 机组组合（HiGHS 求解器，S4；
+                                      // 仅当导入数据带 generator_meta.csv 时可选）
+
     Perspective perspective = Perspective::Platform;   // 当前视角
 
     QString dataSource;                // 数据源描述（内置基准例/内置场景/自定义）

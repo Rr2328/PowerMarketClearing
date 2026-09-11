@@ -12,6 +12,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QRadioButton>
+#include <QSet>
 #include <QSignalBlocker>
 #include <QCoreApplication>
 #include <QDate>
@@ -559,6 +560,21 @@ QWidget *MainWindow::buildControlPage()
     modeRow->addWidget(m_btnMcp, 1);
     modeRow->addWidget(m_btnPab, 1);
 
+    // --- 出清机制（S4）：分段撮合 / SCUC 机组组合（求解器） ---
+    //   UC 为第三种出清引擎：由 generator_meta.csv 的机组参数经 HiGHS
+    //   MILP 求解开停机与出力，出清价 = 经济调度功率平衡对偶。
+    //   UC 机制下结算恒为统一出清价（MCP 同构），故禁用 MCP/PAB 结算卡。
+    m_engineCombo = new QComboBox();
+    m_engineCombo->addItems({
+        QStringLiteral("分段报价撮合（MCP / PAB 结算）"),
+        QStringLiteral("SCUC 机组组合（HiGHS 求解器定价）"),
+    });
+    m_engineCombo->setToolTip(QStringLiteral(
+        "SCUC 机组组合：求解器决定全天 96 期的开停机与出力——\n"
+        "最小技术出力（pMin 基础量）、爬坡限速、最小开/停机时间、启动费用\n"
+        "全部作为约束参与优化；出清价 = 经济调度的功率平衡对偶变量。\n"
+        "要求当前数据目录含 generator_meta.csv。"));
+
     // --- 其余参数 ---
     auto *form = new QFormLayout();
 
@@ -569,6 +585,27 @@ QWidget *MainWindow::buildControlPage()
     });
     m_granCombo->setToolTip(QStringLiteral("创新点③：96 时段连续出清，依据规则 4.1 条"));
     form->addRow(QStringLiteral("时段颗粒度："), m_granCombo);
+
+    form->addRow(QStringLiteral("出清机制："), m_engineCombo);
+    connect(m_engineCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
+        const bool wantUc = (idx == 1);
+        if (wantUc && m_session.market.generatorMeta.isEmpty()) {
+            // 无机组参数表 → 拒绝切换并回弹（SCUC 依赖 generator_meta.csv）
+            QSignalBlocker block(m_engineCombo);
+            m_engineCombo->setCurrentIndex(0);
+            statusBar()->showMessage(
+                QStringLiteral("当前数据不含 generator_meta.csv（机组启停参数），无法启用 SCUC 求解器；请加载内置样例或含该文件的目录"), 8000);
+            return;
+        }
+        m_session.ucMode = wantUc;
+        // UC 机制下结算恒为统一出清价（MCP 同构），MCP/PAB 结算卡置灰
+        if (m_btnMcp) m_btnMcp->setEnabled(!wantUc);
+        if (m_btnPab) m_btnPab->setEnabled(!wantUc);
+        updateFileNamePreviews();
+        // 已有结果时切换机制 → 即时按新机制重算（与渗透率滑块行为一致）
+        if (m_session.hasResult && m_session.hasData)
+            rerunIfReady();
+    });
 
     connect(m_btnMcp, &QPushButton::toggled, this, [this] {
         updateFileNamePreviews();
@@ -877,8 +914,10 @@ QWidget *MainWindow::buildChartPage()
         chart->addSeries(m_renewSeries);
 
         m_axisPriceX = new QValueAxis();
-        m_axisPriceX->setRange(1, 24);
-        m_axisPriceX->setTitleText(QStringLiteral("时段"));
+        // 横轴 = 一天 0–24 小时（24 期 x=期号，96 期 x=期号÷4），13 档均分
+        //   → 刻度恒为整数 0,2,…,24。此前 range 1..24 除不尽，刻度出现 1.0/2.9/4.8 小数
+        m_axisPriceX->setRange(0, 24);
+        m_axisPriceX->setTitleText(QStringLiteral("时刻 (h)"));
         m_axisPriceX->setTickCount(13);
 
         auto *axisLeft = new QValueAxis();
@@ -1138,6 +1177,13 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     if (QFile::exists(quadFile))
         DataReader::readQuadraticGenerators(quadFile, d.quadraticGens, errs);
 
+    // 可选：SCUC 机组技术经济参数（同目录 generator_meta.csv，存在才读；S4）
+    const QString metaFile =
+        QFileInfo(genFile.isEmpty() ? conFile : genFile).absoluteDir()
+            .filePath(QStringLiteral("generator_meta.csv"));
+    if (QFile::exists(metaFile))
+        DataReader::readGeneratorMeta(metaFile, d.generatorMeta, errs);
+
     if (!ok) {
         m_checkErrors = errs;
         renderCheckBar();
@@ -1155,9 +1201,37 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
 
     m_session.market = d;
     m_session.marketBaseline = d;       // 拍快照：按负荷预填的重置基准（幂等）
-    m_session.dataSource = sourceName;
+    // 数据源标签补足真实规模：机组数优先取 meta（SCUC 参与出清的口径），
+    //   否则按申报表 主体+编号 去重；用户数按购电申报主体去重
+    //   （写死的样例描述会随样例重标定而过时，如旧文案「8 机组」实际只有 5 台）
+    {
+        QSet<QString> genKeys, conKeys;
+        for (const auto &g : d.generatorBids)
+            genKeys.insert(g.name + QLatin1Char('\x1f') + g.id);
+        for (const auto &c : d.consumerBids)
+            conKeys.insert(c.name + QLatin1Char('\x1f') + c.id);
+        const int genCount =
+            d.generatorMeta.isEmpty() ? genKeys.size() : d.generatorMeta.size();
+        m_session.dataSource = QStringLiteral("%1（%2 机组 · %3 用户）")
+                                   .arg(sourceName)
+                                   .arg(genCount)
+                                   .arg(conKeys.size());
+    }
     m_session.hasData = true;
     m_session.quadraticMode = quadratic;   // 申报形式与数据绑定（导入时确定，V1.3.2）
+
+    // S4：UC 机制依赖 generator_meta.csv——新数据缺失时自动退回分段撮合并提示
+    if (m_session.ucMode && d.generatorMeta.isEmpty()) {
+        m_session.ucMode = false;
+        if (m_engineCombo) {
+            QSignalBlocker block(m_engineCombo);
+            m_engineCombo->setCurrentIndex(0);
+        }
+        if (m_btnMcp) m_btnMcp->setEnabled(true);
+        if (m_btnPab) m_btnPab->setEnabled(true);
+        statusBar()->showMessage(
+            QStringLiteral("新数据不含 generator_meta.csv，出清机制已退回「分段报价撮合」"), 8000);
+    }
     m_session.resetResult();
     m_checkErrors.clear();
 
@@ -1248,7 +1322,7 @@ void MainWindow::onLoadSamples()
     }
     loadDataFiles(dir + QStringLiteral("/scenario/generator_bids.csv"),
                   dir + QStringLiteral("/scenario/consumer_bids.csv"),
-                  QStringLiteral("内置场景（8 机组 · 3 用户）"),
+                  QStringLiteral("内置场景"),
                   dir + QStringLiteral("/curves/load_curve.csv"),
                   dir + QStringLiteral("/curves/renewable_output.csv"),
                   m_formQuad && m_formQuad->isChecked());
@@ -1325,8 +1399,11 @@ void MainWindow::runClearing()
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
 
     // 出清（B 位真实引擎外壳，每时段 = 购电申报总量 + 渗透率×负荷的新能源）
-    // 二次曲线模式（选题 (10) 问）：勾选且导入数据带二次参数时走二分出清
-    if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+    // 优先级：SCUC 机组组合（数据带 meta）→ 二次曲线（勾选且带二次参数）→ 分段撮合
+    if (m_session.ucMode && !m_session.market.generatorMeta.isEmpty()) {
+        m_session.result = ClearingFacade::clearPeriodsUc(
+            m_session.market, periodCount, m_session.renewPercent / 100.0);
+    } else if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
         m_session.result = ClearingFacade::clearPeriodsQuadratic(
             m_session.market, periodCount, m_session.renewPercent / 100.0);
     } else {
@@ -1559,9 +1636,11 @@ void MainWindow::refreshImportPage()
     //   V1.3.2：发电侧就绪判定随申报形式切换（二次形式看二次参数表）
     const bool quadForm2 =
         m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
+    const bool ucForm2 = m_session.ucMode && !m_session.market.generatorMeta.isEmpty();
     const bool ready[2] = {
-        quadForm2 ? !m_session.market.quadraticGens.isEmpty()
-                  : !m_session.market.generatorBids.isEmpty(),
+        ucForm2   ? !m_session.market.generatorMeta.isEmpty()
+                  : quadForm2 ? !m_session.market.quadraticGens.isEmpty()
+                              : !m_session.market.generatorBids.isEmpty(),
         !m_session.market.consumerBids.isEmpty(),
     };
     for (int i = 0; i < 2; ++i) {
@@ -1618,6 +1697,12 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     }
     // V1.3.2：二次模式购电侧表为固定负荷表（用电量可调、占比联动），语义与分段表不同
     if (!isGen && m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        onQuadLoadChanged(item);
+        return;
+    }
+    // S4：UC 机制下购电侧与二次模式同口径（需求 = Σ购电申报量，可编辑）；
+    //   发电侧 meta 参数表只读（lockedItem），itemChanged 不会触发到这里
+    if (!isGen && m_session.ucMode && !m_session.market.generatorMeta.isEmpty()) {
         onQuadLoadChanged(item);
         return;
     }
@@ -1984,7 +2069,10 @@ void MainWindow::rerunIfReady()
 // ============================================================
 void MainWindow::setHasResult(bool on)
 {
-    if (on && !m_hasResult) {
+    // 每次置为"有结果"都强制刷新三个结果页——重复仿真/改参数后重跑时，
+    //   m_hasResult 已是 true，若只在 !m_hasResult 转换时刷新，
+    //   P3/P4/P5 会停留在上一次的结果（须切视角才被动更新）
+    if (on) {
         refreshResultPage();
         refreshChartPage();
         refreshExportPage();
@@ -2145,15 +2233,18 @@ void MainWindow::refreshChartPage()
     const Perspective p = m_session.perspective;
 
     // 分时电价曲线（真实出清结果）
+    //   横轴统一换算为一天 0–24 小时：24 期 x=期号(i+1)，96 期 x=(i+1)/4——
+    //   两种粒度下轴范围都是 0–24，13 档刻度恒为整数
     if (m_priceSeries && m_renewSeries) {
         m_priceSeries->clear();
         m_renewSeries->clear();
+        const double hourPerPeriod = 24.0 / std::max(1, T);
         for (int i = 0; i < T; ++i) {
-            m_priceSeries->append(i + 1, periods[i].clearingPrice);
-            m_renewSeries->append(i + 1, periods[i].renewMW);
+            m_priceSeries->append((i + 1) * hourPerPeriod, periods[i].clearingPrice);
+            m_renewSeries->append((i + 1) * hourPerPeriod, periods[i].renewMW);
         }
         if (m_axisPriceX)
-            m_axisPriceX->setRange(1, std::max(1, T));
+            m_axisPriceX->setRange(0, 24);
     }
 
     // 供需交叉图（真实申报阶梯 + 出清价水平线）
@@ -2180,7 +2271,47 @@ void MainWindow::refreshChartPage()
 
         // 二次模式截面现解结果（<0 = 非二次模式，走聚合结果取值）
         double quadLam = -1.0, quadCv = -1.0;
-        if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
+        // S4：UC 机制截面——供给 = 按电量成本升序的 merit-order 阶梯（宽度 pMax，
+        //   前置新能源 0 价段）；需求 = 净负荷竖线（口径与引擎一致：Σ购电申报量(t)
+        //   优先、负荷曲线回退）。出清价虚线/出清点走下方聚合结果取值（引擎逐期原生 λ）
+        if (m_session.ucMode && !m_session.market.generatorMeta.isEmpty()) {
+            const auto ps = MarketView::periodSums(m_session.market, chartPeriod);
+            const double load = ps.conMW > 0.0
+                                    ? ps.conMW
+                                    : (ps.loadFound ? ps.loadMW : 0.0);
+            const double renewCap = ClearingFacade::renewCapacityAt(
+                m_session.market, chartPeriod, m_session.renewPercent / 100.0);
+            const double renewActual = std::min(renewCap, std::max(0.0, load));
+
+            QVector<const GeneratorMeta *> order;
+            for (const auto &g : m_session.market.generatorMeta)
+                order.append(&g);
+            std::sort(order.begin(), order.end(),
+                      [](const GeneratorMeta *a, const GeneratorMeta *b) {
+                          return a->marginalCost < b->marginalCost;
+                      });
+            double pMaxSum = 0.0;
+            for (const auto *g : order) {
+                maxPrice = std::max(maxPrice, g->marginalCost);
+                pMaxSum += g->pMax;
+            }
+            maxPrice = std::max(maxPrice, 1.0) * 1.10;
+
+            if (renewActual > 0.0) {           // 新能源 0 价段置顶
+                m_supplySeries->append(0.0, 0.0);
+                m_supplySeries->append(renewActual, 0.0);
+            }
+            for (const auto *g : order) {      // merit-order 阶梯
+                m_supplySeries->append(renewActual + cumG, g->marginalCost);
+                cumG += g->pMax;
+                m_supplySeries->append(renewActual + cumG, g->marginalCost);
+            }
+            cumC = std::max(0.0, load - renewActual);
+            if (load > 0.0) {
+                m_demandSeries->append(load, 0.0);
+                m_demandSeries->append(load, maxPrice);
+            }
+        } else if (m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty()) {
             // 二次曲线模式（选题 2026v2 (10) 问）：供给 = 平滑 MC 包络曲线
             //   P(λ) = Σ clamp((λ−b)/2a, 0, pMax)，新能源 0 价水平段置于曲线起点；
             //   需求 = 净负荷竖线，出清点 = 竖线与曲线交点，出清价 = 交点纵坐标 λ*。
@@ -2443,11 +2574,24 @@ void MainWindow::onRunSim()
         return;
     setHasResult(true);
     m_nav->setCurrentRow(2);
-    statusBar()->showMessage(
-        QStringLiteral("仿真完成：%1 · %2 模式 · %3 时段")
-            .arg(m_session.dataSource, m_session.result.mode)
-            .arg(m_session.result.periods.size()),
-        6000);
+    // UC 机制附加 KPI：启动次数 / 启动成本 / 求解器总成本
+    if (m_session.result.mode == QStringLiteral("UC")) {
+        statusBar()->showMessage(
+            QStringLiteral("仿真完成：%1 · SCUC 机组组合 · %2 时段 · 启动 %3 次（%4 元）· 空载 %5 元 · 总成本 %6 元")
+                .arg(m_session.dataSource)
+                .arg(m_session.result.periods.size())
+                .arg(m_session.result.startupCount)
+                .arg(m_session.result.startupCostTotal, 0, 'f', 0)
+                .arg(m_session.result.noLoadCostTotal, 0, 'f', 0)
+                .arg(m_session.result.totalCost, 0, 'f', 0),
+            8000);
+    } else {
+        statusBar()->showMessage(
+            QStringLiteral("仿真完成：%1 · %2 模式 · %3 时段")
+                .arg(m_session.dataSource, m_session.result.mode)
+                .arg(m_session.result.periods.size()),
+            6000);
+    }
 }
 
 void MainWindow::onExportDaily()

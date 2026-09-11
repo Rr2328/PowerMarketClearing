@@ -2155,3 +2155,148 @@ bool DataReader::readQuadraticGenerators(
 
     return !data.isEmpty();
 }
+
+// ------------------------------------------------------------------
+// SCUC 机组技术经济参数表（可选文件 generator_meta.csv，求解器方案 S4）
+//   表头 name,id,pMin,pMax,rampUp,rampDown,minUpTime,minDownTime,
+//        startupCost,noLoadCost,marginalCost；行 = 机组（全天一套参数）。
+//   校验：pMax>0、0 ≤ pMin ≤ pMax、minUp/minDown ≥ 1、费用非负；
+//   爬坡 <0 视为不限制（存 0，与 uc_solver 口径一致）。
+// ------------------------------------------------------------------
+bool DataReader::readGeneratorMeta(
+    const QString &filePath,
+    QVector<GeneratorMeta> &data,
+    QStringList &errors)
+{
+    data.clear();
+
+    QFile file(filePath);
+
+    if (!file.exists())
+    {
+        // 可选文件：不存在不是错误
+        return false;
+    }
+
+    if (!file.open(
+            QIODevice::ReadOnly |
+            QIODevice::Text))
+    {
+        addError(
+            errors,
+            QStringLiteral("机组技术参数"),
+            "文件无法打开：" + filePath);
+
+        return false;
+    }
+
+    QTextStream in(&file);
+
+    if (in.atEnd())
+    {
+        addError(
+            errors,
+            QStringLiteral("机组技术参数"),
+            "CSV 文件为空：" + filePath);
+
+        return false;
+    }
+
+    const QStringList header =
+        splitCsvLine(
+            in.readLine().trimmed());
+
+    const QStringList expectedHeader = {
+        QStringLiteral("name"),
+        QStringLiteral("id"),
+        QStringLiteral("pMin"),
+        QStringLiteral("pMax"),
+        QStringLiteral("rampUp"),
+        QStringLiteral("rampDown"),
+        QStringLiteral("minUpTime"),
+        QStringLiteral("minDownTime"),
+        QStringLiteral("startupCost"),
+        QStringLiteral("noLoadCost"),
+        QStringLiteral("marginalCost")
+    };
+
+    if (header != expectedHeader)
+    {
+        addError(
+            errors,
+            QStringLiteral("机组技术参数"),
+            "表头不符，期望 name,id,pMin,pMax,rampUp,rampDown,minUpTime,"
+            "minDownTime,startupCost,noLoadCost,marginalCost：" + filePath);
+
+        return false;
+    }
+
+    while (!in.atEnd())
+    {
+        const QString line =
+            in.readLine().trimmed();
+
+        if (line.isEmpty())
+        {
+            continue;
+        }
+
+        const QStringList columns =
+            splitCsvLine(line);
+
+        if (columns.size() < 11)
+        {
+            addError(
+                errors,
+                QStringLiteral("机组技术参数"),
+                QString("行 %1 列数不足（需 11 列）")
+                    .arg(line));
+
+            continue;
+        }
+
+        GeneratorMeta m;
+
+        m.name = columns[0];
+        m.id = columns[1];
+
+        bool ok = true;
+        m.pMin = columns[2].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "pMin 读取失败：" + line); continue; }
+        m.pMax = columns[3].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "pMax 读取失败：" + line); continue; }
+        m.rampUp = columns[4].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "rampUp 读取失败：" + line); continue; }
+        m.rampDown = columns[5].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "rampDown 读取失败：" + line); continue; }
+        m.minUpTime = columns[6].toInt(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "minUpTime 读取失败：" + line); continue; }
+        m.minDownTime = columns[7].toInt(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "minDownTime 读取失败：" + line); continue; }
+        m.startupCost = columns[8].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "startupCost 读取失败：" + line); continue; }
+        m.noLoadCost = columns[9].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "noLoadCost 读取失败：" + line); continue; }
+        m.marginalCost = columns[10].toDouble(&ok);
+        if (!ok) { addError(errors, QStringLiteral("机组技术参数"), "marginalCost 读取失败：" + line); continue; }
+
+        if (m.rampUp < 0.0) m.rampUp = 0.0;     // 负数 = 不限制（uc_solver 口径）
+        if (m.rampDown < 0.0) m.rampDown = 0.0;
+
+        if (m.pMax <= 0.0 || m.pMin < 0.0 || m.pMin > m.pMax
+            || m.minUpTime < 1 || m.minDownTime < 1
+            || m.startupCost < 0.0 || m.noLoadCost < 0.0)
+        {
+            addError(
+                errors,
+                QStringLiteral("机组技术参数"),
+                "参数越界（需 pMax>0、0≤pMin≤pMax、minUp/minDown≥1、费用非负）：" + line);
+
+            continue;
+        }
+
+        data.append(m);
+    }
+
+    return !data.isEmpty();
+}

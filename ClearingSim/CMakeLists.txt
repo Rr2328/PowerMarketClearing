@@ -11,6 +11,17 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS
 qt_standard_project_setup()
 
 
+# HiGHS 求解器（SCUC 机组组合，方案 §五）
+#   MIT 开源、纯 C++、MinGW 兼容；源码在仓库 third_party/HiGHS（浅克隆），
+#   add_subdirectory 编译为静态库 highs。只开核心库，关掉它自带的测试/示例。
+set(BUILD_TESTING          OFF CACHE BOOL "" FORCE)
+set(BUILD_CXX_EXE          OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_EXTRAS_LIB OFF CACHE BOOL "" FORCE)
+set(FAST_BUILD             ON  CACHE BOOL "" FORCE)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../third_party/HiGHS
+                 ${CMAKE_BINARY_DIR}/third_party/HiGHS)
+
+
 # 主程序
 
 qt_add_executable(ClearingSim
@@ -39,6 +50,9 @@ qt_add_executable(ClearingSim
 
     quadratic_clearing.h
     quadratic_clearing.cpp
+
+    uc/uc_solver.h
+    uc/uc_solver.cpp
 )
 
 target_include_directories(ClearingSim
@@ -51,6 +65,7 @@ target_link_libraries(ClearingSim
         Qt::Core
         Qt::Widgets
         Qt::Charts
+        highs
 )
 
 
@@ -131,11 +146,14 @@ qt_add_executable(ClearingFacadeTest
     data/data_reader.cpp
     quadratic_clearing.h
     quadratic_clearing.cpp
+    uc/uc_solver.h
+    uc/uc_solver.cpp
 )
 
 target_link_libraries(ClearingFacadeTest
     PRIVATE
         Qt::Core
+        highs
 )
 
 target_include_directories(ClearingFacadeTest
@@ -160,11 +178,14 @@ qt_add_executable(DataPipelineIntegrationTest
     engine/clearing_engine.h
     quadratic_clearing.h
     quadratic_clearing.cpp
+    uc/uc_solver.h
+    uc/uc_solver.cpp
 )
 
 target_link_libraries(DataPipelineIntegrationTest
     PRIVATE
         Qt::Core
+        highs
 )
 
 target_include_directories(DataPipelineIntegrationTest
@@ -209,11 +230,14 @@ qt_add_executable(QuadraticClearingTest
     core/clearing_facade.cpp
     engine/clearing_engine.h
     engine/clearing_engine.cpp
+    uc/uc_solver.h
+    uc/uc_solver.cpp
 )
 
 target_link_libraries(QuadraticClearingTest
     PRIVATE
         Qt::Core
+        highs
 )
 
 target_include_directories(QuadraticClearingTest
@@ -222,6 +246,35 @@ target_include_directories(QuadraticClearingTest
 )
 
 add_test(NAME QuadraticClearingTest COMMAND QuadraticClearingTest)
+
+# HiGHS 求解器接入验证（SCUC S1）
+
+qt_add_executable(HighsHelloTest
+    uc/uc_hello_test.cpp
+)
+
+target_link_libraries(HighsHelloTest
+    PRIVATE
+        highs
+)
+
+add_test(NAME HighsHelloTest COMMAND HighsHelloTest)
+
+# SCUC 求解器测试（S2：LP 建模 + 对偶价对拍）
+
+qt_add_executable(UcSolverTest
+    uc/uc_solver_test.cpp
+    uc/uc_solver.h
+    uc/uc_solver.cpp
+)
+
+target_link_libraries(UcSolverTest
+    PRIVATE
+        highs
+        Qt::Core
+)
+
+add_test(NAME UcSolverTest COMMAND UcSolverTest)
 
 # 让 Windows 控制台输出也走 stderr（IDE/Test Explorer 看得到）
 set_tests_properties(

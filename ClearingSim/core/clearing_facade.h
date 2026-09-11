@@ -42,9 +42,15 @@ struct PeriodResult
 // 一次完整仿真的结果（benchmark 只有 1 个时段；连续仿真有 24/96 个）
 struct ClearingResult
 {
-    QString mode;             // "MCP" / "PAB"
+    QString mode;             // "MCP" / "PAB" / "QUAD" / "UC"
     QString sourceName;       // 数据源描述（内置基准例 / 内置场景 / 自定义）
     QVector<PeriodResult> periods;
+
+    // UC 模式（SCUC 机组组合）汇总 KPI；其余模式恒为 0
+    int startupCount = 0;         // 全天启动次数（Σ su）
+    double startupCostTotal = 0.0; // 全天启动成本（元）
+    double noLoadCostTotal = 0.0;  // 全天空载成本（元）
+    double totalCost = 0.0;        // 求解器总成本（电量+空载+启动，元）
 };
 
 // ------------------------------------------------------------------
@@ -82,6 +88,17 @@ public:
     //   mode 固定记 "QUAD"；periodCount 聚合口径与 clearPeriods 一致。
     static ClearingResult clearPeriodsQuadratic(const MarketData &market,
                                                 int periodCount, double penetration);
+
+    // SCUC 机组组合模式（求解器方案 S4，HiGHS MILP）：
+    //   发电侧以 generator_meta.csv 的线性成本申报（marginalCost 元/MWh），
+    //   求解器决定全天 96 期的开停机与出力（含 pMin 基础量、爬坡、
+    //   最小开/停机时间、启动费用），出清价 = 逐时段经济调度的
+    //   功率平衡对偶变量（"UC 定开停、ED 定价格"）。
+    //   需求口径与二次模式一致（V1.3.3）：Σ购电申报量(t) 优先、负荷曲线回退；
+    //   渗透率换算 renewCapacityAt 同式。market.generatorMeta 为空时返回空结果。
+    //   mode 记 "UC"；24 期聚合口径与 clearPeriods 一致。
+    static ClearingResult clearPeriodsUc(const MarketData &market,
+                                         int periodCount, double penetration);
 
 private:
     // 单个时段的出清核心：构造真引擎入参 → ClearMarket → 聚合为 PeriodResult

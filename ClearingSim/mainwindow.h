@@ -101,6 +101,7 @@ private:
     QStackedWidget *m_exportStack  = nullptr;
     QPushButton    *m_btnMcp       = nullptr;   // MCP 模式卡（checkable，与 PAB 互斥）
     QPushButton    *m_btnPab       = nullptr;
+    QComboBox      *m_engineCombo  = nullptr;   // 出清机制下拉：分段撮合 / SCUC 机组组合（S4）
     QComboBox      *m_granCombo    = nullptr;
     QLabel         *m_pageTitle    = nullptr;
     QLabel         *m_pageSub      = nullptr;

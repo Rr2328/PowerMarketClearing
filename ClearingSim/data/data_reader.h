@@ -6,6 +6,7 @@
 #include <QVector>
 
 #include "../quadratic_clearing.h"
+#include "../uc/uc_solver.h"     // GeneratorMeta（SCUC 机组技术经济参数，S4）
 
 // 发电侧申报数据（V1.3 长表口径）
 //   每条 = 电厂×机组 在某交易时段某申报段的申报；
@@ -78,6 +79,10 @@ struct MarketData
     // 选题 2026v2 (10) 问；行 = 机组，全天一条曲线，非逐时段申报）
     QVector<QuadraticGenerator> quadraticGens;
 
+    // SCUC 机组技术经济参数（可选：generator_meta.csv 提供时启用 UC 模式，
+    // 求解器方案 S4；行 = 机组，pMin/pMax/爬坡/最小开停机/启动费/电量成本）
+    QVector<GeneratorMeta> generatorMeta;
+
     void clear()
     {
         generatorBids.clear();
@@ -85,6 +90,7 @@ struct MarketData
         loadCurve.clear();
         renewableOutputs.clear();
         quadraticGens.clear();
+        generatorMeta.clear();
     }
 };
 
@@ -123,6 +129,15 @@ public:
     static bool readQuadraticGenerators(
         const QString &filePath,
         QVector<QuadraticGenerator> &data,
+        QStringList &errors);
+
+    // SCUC 机组技术经济参数表（可选文件 generator_meta.csv）：
+    //   表头 name,id,pMin,pMax,rampUp,rampDown,minUpTime,minDownTime,
+    //        startupCost,noLoadCost,marginalCost；行 = 机组。
+    //   文件不存在时返回 false 且不记错误（UC 模式仅是未启用）。
+    static bool readGeneratorMeta(
+        const QString &filePath,
+        QVector<GeneratorMeta> &data,
         QStringList &errors);
 
     static bool readAll(

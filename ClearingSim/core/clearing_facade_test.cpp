@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 
+#include <algorithm>
 #include <cmath>
 
 // ============================================================
@@ -238,6 +239,152 @@ int main(int argc, char *argv[])
                   && near(r2.periods[0].clearingPrice, 0.0)
                   && near(r2.periods[0].clearedMW, 0.0),
               QStringLiteral("价格不交叉：零成交、出清价 0（不触发封顶）"));
+    }
+
+    // ---------------- ⑥ UC 模式端到端：场景样例 + generator_meta.csv（S4） ----------------
+    {
+        MarketData m;
+        QStringList errs;
+        check(loadScenario(root, m, errs),
+              QStringLiteral("UC：场景样例读取 %1").arg(errs.join(QStringLiteral(";"))));
+        const QString metaFile = root + QStringLiteral("/data/samples/scenario/generator_meta.csv");
+        check(DataReader::readGeneratorMeta(metaFile, m.generatorMeta, errs)
+                  && m.generatorMeta.size() == 5,
+              QStringLiteral("UC：读取 generator_meta.csv（5 机组）"));
+
+        // meta 缺失 → 空结果守护
+        MarketData noMeta = m;
+        noMeta.generatorMeta.clear();
+        const ClearingResult emptyR = ClearingFacade::clearPeriodsUc(noMeta, 96, 0.2);
+        check(emptyR.periods.isEmpty() && emptyR.mode == QStringLiteral("UC"),
+              QStringLiteral("UC：无 generator_meta.csv → 空结果（模式未启用）"));
+
+        const ClearingResult uc = ClearingFacade::clearPeriodsUc(m, 96, 0.2);
+        check(uc.periods.size() == 96, QStringLiteral("UC：96 期逐时段出清"));
+
+        // 逐期供需平衡（缺口 < 0.5 MW）、λ 落在机组电量成本区间 [150, 260]
+        bool balanced = true, priceInBand = true;
+        for (const auto &pr : uc.periods) {
+            if (pr.clearedMW < pr.loadMW - 0.5)
+                balanced = false;
+            if (pr.clearingPrice < 150.0 - 0.5 || pr.clearingPrice > 260.0 + 0.5)
+                priceInBand = false;
+        }
+        check(balanced, QStringLiteral("UC：96 期供需平衡（缺口 < 0.5 MW）"));
+        check(priceInBand, QStringLiteral("UC：出清价落在电量成本区间 [150, 260]"));
+
+        // 逐期发电明细之和（含新能源段）= 成交量；结算 = Σ p×λ
+        bool detailOk = true;
+        for (const auto &pr : uc.periods) {
+            double sum = 0.0, fee = 0.0;
+            for (const auto &e : pr.genDetails) { sum += e.clearedMW; fee += e.money; }
+            if (!near(sum, pr.clearedMW, 0.5) || !near(fee, pr.genFee, 0.5))
+                detailOk = false;
+        }
+        check(detailOk, QStringLiteral("UC：发电明细/结算与汇总一致"));
+
+        // 峰谷价差与 KPI 合理性：启动次数有限、成本非负
+        check(uc.startupCount > 0 && uc.startupCount < 96
+                  && uc.startupCostTotal > 0.0,
+              QStringLiteral("UC：启动 %1 次、启动成本 %2 元（全天有启停、非逐期乱启）")
+                  .arg(uc.startupCount).arg(uc.startupCostTotal, 0, 'f', 0));
+
+        // 24 期聚合视图
+        const ClearingResult uc24 = ClearingFacade::clearPeriodsUc(m, 24, 0.2);
+        check(uc24.periods.size() == 24
+                  && near(uc24.periods[0].clearingPrice,
+                          (uc.periods[0].clearingPrice + uc.periods[1].clearingPrice
+                           + uc.periods[2].clearingPrice + uc.periods[3].clearingPrice) / 4.0,
+                          0.05),
+              QStringLiteral("UC：24 期聚合价 = 4 期均值"));
+    }
+
+    // ---------------- ⑦ UC 建模行为：pMin 底数 / 停机避底数 / 启动计费 ----------------
+    {
+        // 3 机组：便宜基荷（pMin=100，成本 150）、中档（pMin=50，成本 210）、
+        // 贵调峰（pMin=0，成本 260）。需求 120 → 只需基荷机组开（100 ≤ 120 ≤ 300），
+        // 中档/调峰停机避底数；λ = 150（基荷边际）。
+        QVector<GeneratorMeta> metas;
+        GeneratorMeta base;
+        base.name = QStringLiteral("基荷电厂"); base.id = QStringLiteral("#1机组");
+        base.pMin = 100.0; base.pMax = 300.0; base.marginalCost = 150.0;
+        base.startupCost = 5000.0; base.noLoadCost = 800.0;
+        GeneratorMeta mid = base;
+        mid.name = QStringLiteral("腰荷电厂"); mid.id = QStringLiteral("#2机组");
+        mid.pMin = 50.0; mid.pMax = 200.0; mid.marginalCost = 210.0;
+        GeneratorMeta peak = base;
+        peak.name = QStringLiteral("调峰电厂"); peak.id = QStringLiteral("#3机组");
+        peak.pMin = 0.0; peak.pMax = 150.0; peak.marginalCost = 260.0;
+        metas << base << mid << peak;
+
+        QVector<double> demand(96, 0.0);
+        demand[0] = 120.0;
+        UcInitialState init;
+        init.on = { false, false, false };   // 初始全停 → 需求期启动基荷机组
+        const UcSolution s = solveUcMilp(metas, demand, init);
+
+        check(s.ok && s.u[0][0] == 1 && s.u[1][0] == 0 && s.u[2][0] == 0,
+              QStringLiteral("UC 建模：需求 120 时仅基荷机组开机（其余停机避 pMin 底数）%1")
+                  .arg(s.ok ? QStringLiteral("") : s.message));
+        check(near(s.lambda[0], 150.0),
+              QStringLiteral("UC 建模：λ = 基荷机组电量成本 150（实测 %1）").arg(s.lambda[0]));
+        check(near(s.p[0][0], 120.0, 0.5),
+              QStringLiteral("UC 建模：基荷机组出力 = 需求 120"));
+
+        // 需求 380 → 基荷顶格 300 + 腰荷 80（80 < pMin=50? 不，80 ≥ 50 ✓）→ λ = 210
+        QVector<double> demand2(96, 0.0);
+        demand2[0] = 380.0;
+        const UcSolution s2 = solveUcMilp(metas, demand2, init);
+        check(s2.ok && s2.u[0][0] == 1 && s2.u[1][0] == 1 && s2.u[2][0] == 0
+                  && near(s2.lambda[0], 210.0),
+              QStringLiteral("UC 建模：需求 380 → 基荷+腰荷开机、λ = 210"));
+
+        // 需求超出 ΣpMax → 不可行（稀缺需要另行封顶，UC 模式如实报告）
+        // 需求超出 ΣpMax → 失负荷松弛放行、λ 封顶 540（V1.3.1 稀缺定价同口径，
+        // 与分段引擎封顶行为一致——界面不会因无解而白屏）
+        QVector<double> demand3(96, 0.0);
+        demand3[0] = 1000.0;
+        const UcSolution s3 = solveUcMilp(metas, demand3, init);
+        check(s3.ok && near(s3.lambda[0], 540.0)
+                  && near(s3.shed[0], 350.0, 0.5),
+              QStringLiteral("UC 建模：需求 1000 > ΣpMax 650 → 缺口 350 失负荷、λ 封顶 540"));
+    }
+
+    // ---------------- ⑧ UC × 应用默认数据：scenario/（现实供需形态，峰时供不应求） ----------------
+    //   用户在 GUI 里默认加载的就是这个目录——峰时净负荷 990 > ΣpMax 985，
+    //   曾经因 MILP 无松弛直接无解 → 界面白屏。此用例保证"UI 默认数据恒可解"。
+    {
+        MarketData m;
+        QStringList errs;
+        const QString base = root + QStringLiteral("/data/samples/scenario");
+        DataFileSet files;
+        files.generatorBidsFile = base + QStringLiteral("/generator_bids.csv");
+        files.consumerBidsFile = base + QStringLiteral("/consumer_bids.csv");
+        files.loadCurveFile = root + QStringLiteral("/data/samples/curves/load_curve.csv");
+        files.renewableOutputFile = root + QStringLiteral("/data/samples/curves/renewable_output.csv");
+        check(DataReader::readAll(files, m, errs),
+              QStringLiteral("UC 默认场景：读取 scenario/ 四表 %1").arg(errs.join(QStringLiteral(";"))));
+        check(DataReader::readGeneratorMeta(
+                  base + QStringLiteral("/generator_meta.csv"), m.generatorMeta, errs)
+                  && m.generatorMeta.size() == 5,
+              QStringLiteral("UC 默认场景：读取 generator_meta.csv（5 机组）"));
+
+        // 稀缺断言用 96 期原生粒度（24 期小时均值会把单季度 540 稀释）
+        const ClearingResult uc96 = ClearingFacade::clearPeriodsUc(m, 96, 0.2);
+        const ClearingResult uc = ClearingFacade::clearPeriodsUc(m, 24, 0.2);
+        check(uc.periods.size() == 24 && uc96.periods.size() == 96,
+              QStringLiteral("UC 默认场景：24/96 期出清有解（不白屏）"));
+        bool hasScarcity = false, priceCapped = true;
+        for (const auto &pr : uc96.periods) {
+            if (pr.clearingPrice >= 540.0 - 0.5)
+                hasScarcity = true;
+            if (pr.clearingPrice > 540.0 + 0.5)
+                priceCapped = false;
+        }
+        check(hasScarcity,
+              QStringLiteral("UC 默认场景：峰时段触发稀缺出清价 540（供不应求可见）"));
+        check(priceCapped,
+              QStringLiteral("UC 默认场景：出清价不超过限价 540"));
     }
 
     qInfo().noquote() << (failedTests == 0
