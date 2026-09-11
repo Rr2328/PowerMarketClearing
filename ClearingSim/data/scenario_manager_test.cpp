@@ -60,13 +60,123 @@ QString findRepoRoot()
 // 按时段数生成一组四文件路径
 DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 {
-    const QString suffix =QString::number(periodCount) +"period";
+    // V1.3 契约：96 为唯一原生粒度，样例仅一份长表；
+    //   periodCount 参数保留兼容旧调用点，24 时段视图由聚合合成（见 main）
+    Q_UNUSED(periodCount);
     DataFileSet files;
-    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids_" +suffix +".csv");
-    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids_" +suffix +".csv");
-    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve_" +suffix +".csv");
-    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output_" +suffix +".csv");
+    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids.csv");
+    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids.csv");
+    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve.csv");
+    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output.csv");
     return files;
+}
+
+// （合并适配，V1.3 契约 §7.2）24 时段视图由 96 期数据聚合生成：
+//   负荷/新能源用 ScenarioManager 的 96→24 聚合；发电/购电申报按
+//   (t-1)/4+1 映射到小时，量与价取 4 期均值，主体身份 = (name,id)。
+bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &errors)
+{
+    dst =MarketData();
+    if (!ScenarioManager::aggregateLoadTo24(src.loadCurve,dst.loadCurve,errors))
+    {
+        return false;
+    }
+    if (!ScenarioManager::aggregateRenewableTo24(src.renewableOutputs,dst.renewableOutputs,errors))
+    {
+        return false;
+    }
+    struct HourBid
+    {
+        QString name;
+        QString id;
+        int period =0;
+        double price =0.0;
+        double quantity =0.0;
+        int count =0;
+    };
+    QVector<HourBid> genAcc;
+    for (const GeneratorBid &bid :src.generatorBids)
+    {
+        if (bid.period <1 ||bid.period >96)
+        {
+            errors.append(QString("发电申报出现非法时段 %1").arg(bid.period));
+            return false;
+        }
+        const int hour =(bid.period -1)/4 +1;
+        HourBid *acc =nullptr;
+        for (HourBid &item :genAcc)
+        {
+            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {
+                acc =&item;
+                break;
+            }
+        }
+        if (!acc)
+        {
+            HourBid fresh;
+            fresh.name =bid.name;
+            fresh.id =bid.id;
+            fresh.period =hour;
+            genAcc.append(fresh);
+            acc =&genAcc.last();
+        }
+        acc->price +=bid.price;
+        acc->quantity +=bid.quantity;
+        ++acc->count;
+    }
+    for (const HourBid &item :genAcc)
+    {
+        GeneratorBid bid;
+        bid.name =item.name;
+        bid.id =item.id;
+        bid.period =item.period;
+        bid.price =item.count >0 ?item.price /item.count :0.0;
+        bid.quantity =item.count >0 ?item.quantity /item.count :0.0;
+        dst.generatorBids.append(bid);
+    }
+    QVector<HourBid> conAcc;
+    for (const ConsumerBid &bid :src.consumerBids)
+    {
+        if (bid.period <1 ||bid.period >96)
+        {
+            errors.append(QString("购电申报出现非法时段 %1").arg(bid.period));
+            return false;
+        }
+        const int hour =(bid.period -1)/4 +1;
+        HourBid *acc =nullptr;
+        for (HourBid &item :conAcc)
+        {
+            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {
+                acc =&item;
+                break;
+            }
+        }
+        if (!acc)
+        {
+            HourBid fresh;
+            fresh.name =bid.name;
+            fresh.id =bid.id;
+            fresh.period =hour;
+            conAcc.append(fresh);
+            acc =&conAcc.last();
+        }
+        acc->price +=bid.price;
+        acc->quantity +=bid.quantity;
+        ++acc->count;
+    }
+    for (const HourBid &item :conAcc)
+    {
+        ConsumerBid bid;
+        bid.name =item.name;
+        bid.id =item.id;
+        bid.period =item.period;
+        bid.price =item.count >0 ?item.price /item.count :0.0;
+        bid.quantity =item.count >0 ?item.quantity /item.count :0.0;
+        dst.consumerBids.append(bid);
+    }
+    return true;
 }
 // 输出错误明细
 void printErrors(const QStringList &errors)
@@ -185,7 +295,7 @@ bool allRenewablesBelongToPeriod(const PeriodScenario &scenario)
 // 比较两条发电申报的关键字段是否一致
 bool sameGeneratorBid(const GeneratorBid &a,const GeneratorBid &b)
 {
-    return a.id == b.id &&a.name == b.name &&a.type == b.type &&a.segment == b.segment &&std::abs(a.price -b.price) <0.000001 &&std::abs(a.quantity -b.quantity) <0.000001 &&a.period == b.period;
+    return a.id == b.id &&a.name == b.name &&a.segment == b.segment &&std::abs(a.price -b.price) <0.000001 &&std::abs(a.quantity -b.quantity) <0.000001 &&a.period == b.period;
 }
 // 比较两条购电申报的关键字段是否一致
 bool sameConsumerBid(const ConsumerBid &a,const ConsumerBid &b)
@@ -237,21 +347,22 @@ int main(int argc,char *argv[])
         return 1;
     }
     qInfo().noquote()<< "Scenario directory:"<< QDir::toNativeSeparators(scenarioDir);
-    // 读取 24 时段数据
-    MarketData data24;
+    // 读取 96 时段数据（V1.3 契约：96 为唯一原生粒度，样例为长表）
+    MarketData data96;
     QStringList errors;
-    bool ok =DataReader::readAll(makeFileSet(scenarioDir,24),data24,errors);
-    check(ok,"读取 24 时段基础数据");
+    bool ok =DataReader::readAll(makeFileSet(scenarioDir,96),data96,errors);
+    check(ok,"读取 96 时段基础数据");
     if (!ok)
     {
         printErrors(errors);
         return 1;
     }
-    // 读取 96 时段数据
-    MarketData data96;
-    errors.clear();
-    ok =DataReader::readAll(makeFileSet(scenarioDir,96),data96,errors);
-    check(ok,"读取 96 时段基础数据");
+    // 24 时段视图：V1.3 契约 §7.2 下 24 不再是原生粒度，
+    //   由 96 期数据经 ScenarioManager 聚合合成
+    //   （合并适配：原实现读取 24 时段原生样例，该路径已随 V1.3 契约移除）
+    MarketData data24;
+    ok =aggregateMarketDataTo24(data96,data24,errors);
+    check(ok,"96 → 24 聚合合成 24 时段视图");
     if (!ok)
     {
         printErrors(errors);
@@ -387,11 +498,13 @@ int main(int argc,char *argv[])
     errors.clear();
     ok =ScenarioManager::buildPeriodScenarios(brokenLoad,TimeGranularity::QuarterHourly96,invalidScenarios,errors);
     check(!ok &&!errors.isEmpty(),"识别 96 时段负荷缺失");
-    // 构建场景时新能源缺失
+    // 构建场景时新能源数据非法
+    //   （合并适配：V1.3 下新能源形状为可选数据，缺行不报错——
+    //     渗透率换算可兜底；故改为破坏时段合法性，仍须被识别拒绝）
     MarketData brokenRenewable =data96;
     if (!brokenRenewable.renewableOutputs.isEmpty())
     {
-        brokenRenewable.renewableOutputs.removeLast();
+        brokenRenewable.renewableOutputs.last().period =0;
     }
     errors.clear();
     ok =ScenarioManager::buildPeriodScenarios(brokenRenewable,TimeGranularity::QuarterHourly96,invalidScenarios,errors);

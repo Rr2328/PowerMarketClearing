@@ -59,13 +59,123 @@ QString findRepoRoot()
 // 按时段数生成一组四文件路径。
 DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 {
-    const QString suffix =QString::number(periodCount) +"period";
+    // V1.3 契约：96 为唯一原生粒度，样例仅一份长表；
+    //   periodCount 参数保留兼容旧调用点，24 时段视图由聚合合成（见 main）
+    Q_UNUSED(periodCount);
     DataFileSet files;
-    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids_" +suffix +".csv");
-    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids_" +suffix +".csv");
-    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve_" +suffix +".csv");
-    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output_" +suffix +".csv");
+    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids.csv");
+    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids.csv");
+    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve.csv");
+    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output.csv");
     return files;
+}
+
+// （合并适配，V1.3 契约 §7.2）24 时段视图由 96 期数据聚合生成：
+//   负荷/新能源用 ScenarioManager 的 96→24 聚合；发电/购电申报按
+//   (t-1)/4+1 映射到小时，量与价取 4 期均值，主体身份 = (name,id)。
+bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &errors)
+{
+    dst =MarketData();
+    if (!ScenarioManager::aggregateLoadTo24(src.loadCurve,dst.loadCurve,errors))
+    {
+        return false;
+    }
+    if (!ScenarioManager::aggregateRenewableTo24(src.renewableOutputs,dst.renewableOutputs,errors))
+    {
+        return false;
+    }
+    struct HourBid
+    {
+        QString name;
+        QString id;
+        int period =0;
+        double price =0.0;
+        double quantity =0.0;
+        int count =0;
+    };
+    QVector<HourBid> genAcc;
+    for (const GeneratorBid &bid :src.generatorBids)
+    {
+        if (bid.period <1 ||bid.period >96)
+        {
+            errors.append(QString("发电申报出现非法时段 %1").arg(bid.period));
+            return false;
+        }
+        const int hour =(bid.period -1)/4 +1;
+        HourBid *acc =nullptr;
+        for (HourBid &item :genAcc)
+        {
+            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {
+                acc =&item;
+                break;
+            }
+        }
+        if (!acc)
+        {
+            HourBid fresh;
+            fresh.name =bid.name;
+            fresh.id =bid.id;
+            fresh.period =hour;
+            genAcc.append(fresh);
+            acc =&genAcc.last();
+        }
+        acc->price +=bid.price;
+        acc->quantity +=bid.quantity;
+        ++acc->count;
+    }
+    for (const HourBid &item :genAcc)
+    {
+        GeneratorBid bid;
+        bid.name =item.name;
+        bid.id =item.id;
+        bid.period =item.period;
+        bid.price =item.count >0 ?item.price /item.count :0.0;
+        bid.quantity =item.count >0 ?item.quantity /item.count :0.0;
+        dst.generatorBids.append(bid);
+    }
+    QVector<HourBid> conAcc;
+    for (const ConsumerBid &bid :src.consumerBids)
+    {
+        if (bid.period <1 ||bid.period >96)
+        {
+            errors.append(QString("购电申报出现非法时段 %1").arg(bid.period));
+            return false;
+        }
+        const int hour =(bid.period -1)/4 +1;
+        HourBid *acc =nullptr;
+        for (HourBid &item :conAcc)
+        {
+            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {
+                acc =&item;
+                break;
+            }
+        }
+        if (!acc)
+        {
+            HourBid fresh;
+            fresh.name =bid.name;
+            fresh.id =bid.id;
+            fresh.period =hour;
+            conAcc.append(fresh);
+            acc =&conAcc.last();
+        }
+        acc->price +=bid.price;
+        acc->quantity +=bid.quantity;
+        ++acc->count;
+    }
+    for (const HourBid &item :conAcc)
+    {
+        ConsumerBid bid;
+        bid.name =item.name;
+        bid.id =item.id;
+        bid.period =item.period;
+        bid.price =item.count >0 ?item.price /item.count :0.0;
+        bid.quantity =item.count >0 ?item.quantity /item.count :0.0;
+        dst.consumerBids.append(bid);
+    }
+    return true;
 }
 // 输出错误明细。
 void printErrors(const QStringList &errors)
@@ -136,19 +246,13 @@ bool scenarioMatchesMarketData(const PeriodScenario &scenario,const MarketData &
 {
     return scenario.generatorBids.size() ==countGeneratorBids(data,scenario.period) &&scenario.consumerBids.size() ==countConsumerBids(data,scenario.period);
 }
-// 跑通「CSV → MarketData → PeriodScenario」完整链路测试。
-bool runPipelineTest(const QString &scenarioDir,int periodCount,TimeGranularity granularity)
+// 跑通「MarketData → PeriodScenario」链路测试（数据由调用方准备：
+//   96 期为 V1.3 原生长表；24 期为聚合合成视图，见 aggregateMarketDataTo24）。
+bool pipelineFromData(const MarketData &data,int periodCount,TimeGranularity granularity)
 {
     qInfo().noquote()<< "-----"<< periodCount<< "period pipeline -----";
-    MarketData data;
     QStringList errors;
-    bool ok =DataReader::readAll(makeFileSet(scenarioDir,periodCount),data,errors);
-    check(ok,QString("%1 时段 CSV → MarketData").arg(periodCount));
-    if (!ok)
-    {
-        printErrors(errors);
-        return false;
-    }
+    bool ok =false;
     check(data.loadCurve.size() ==periodCount,QString("%1 时段负荷数量正确").arg(periodCount));
     const QSet<QString> genIds =generatorIds(data.generatorBids);
     const QSet<QString> conIds =consumerIds(data.consumerBids);
@@ -200,10 +304,36 @@ int main(int argc,char *argv[])
     {
         return 1;
     }
-    // 24 时段链路测试。
-    runPipelineTest(scenarioDir,24,TimeGranularity::Hourly24);
-    // 96 时段链路测试。
-    runPipelineTest(scenarioDir,96,TimeGranularity::QuarterHourly96);
+    // 96 期原生链路（V1.3 长表：CSV → DataReader → 场景）。
+    MarketData data96;
+    QStringList errors;
+    bool ok =DataReader::readAll(makeFileSet(scenarioDir,96),data96,errors);
+    check(ok,"96 时段 CSV → MarketData");
+    if (ok)
+    {
+        ok =pipelineFromData(data96,96,TimeGranularity::QuarterHourly96);
+    }
+    else
+    {
+        printErrors(errors);
+    }
+    // 24 时段视图链路：由 96 期聚合合成（V1.3 契约 §7.2，合并适配：
+    //   原实现读取 24 时段原生样例，该路径已随 V1.3 契约移除）。
+    if (ok)
+    {
+        MarketData data24;
+        errors.clear();
+        ok =aggregateMarketDataTo24(data96,data24,errors);
+        check(ok,"96 → 24 聚合合成 24 时段视图");
+        if (ok)
+        {
+            ok =pipelineFromData(data24,24,TimeGranularity::Hourly24);
+        }
+        else
+        {
+            printErrors(errors);
+        }
+    }
     // 输出汇总，失败数决定退出码。
     qInfo().noquote()<< "===============================================";
     if (failedTests == 0)
