@@ -164,26 +164,6 @@ QString buildLoadCsv(int count)
     return content;
 }
 
-// 生成新能源测试文件
-QString buildRenewableCsv(
-    int count)
-{
-    QString content =
-        "机组ID,机组类型,时段,出力(MW)\n";
-
-    for (int period = 1;
-         period <= count;
-         ++period)
-    {
-        content +=
-            QString(
-                "W1,风电,%1,40.0\n")
-                .arg(period);
-    }
-
-    return content;
-}
-
 } // namespace
 
 
@@ -230,11 +210,6 @@ int main(
         repoRoot +
         "/data/samples/curves/load_curve.csv";
 
-    files.renewableOutputFile =
-        repoRoot +
-        "/data/samples/curves/renewable_output.csv";
-
-
     MarketData marketData;
     QStringList errors;
 
@@ -265,10 +240,6 @@ int main(
         qInfo().noquote()
             << "Load points:"
             << marketData.loadCurve.size();
-
-        qInfo().noquote()
-            << "Renewable outputs:"
-            << marketData.renewableOutputs.size();
 
         // 窄表展开：申报条数 = 原行数 × 96，且各时段同量同价
         const int genRows =
@@ -327,10 +298,13 @@ int main(
     // V1.3：跨文件校验不再阻断（新能源不进申报表；平衡偏差改 P1 提示）
     errors.clear();
 
+    QStringList hints;
+
     ok =
         DataReader::validateRelations(
             marketData,
-            errors);
+            errors,
+            hints);
 
     check(
         ok,
@@ -339,6 +313,56 @@ int main(
     if (!ok)
     {
         printErrors(errors);
+    }
+
+    // 平衡提示真实落地检查（契约 §3.2-3）：合成数据三态验证——
+    //   负荷 100/200/300/400，申报 100/200/300/300 → 时段4 缺口 100 MW
+    {
+        MarketData syn;
+        const double loads[] = { 100.0, 200.0, 300.0, 400.0 };
+        for (int t = 1; t <= 4; ++t)
+        {
+            LoadPoint lp;
+            lp.period = t;
+            lp.load = loads[t - 1];
+            syn.loadCurve.append(lp);
+        }
+        for (int t = 1; t <= 4; ++t)
+        {
+            ConsumerBid cb;
+            cb.name = "用户A";
+            cb.id = "L1";
+            cb.period = t;
+            cb.quantity = (t == 4) ? 300.0 : loads[t - 1];   // 时段4 少报 100
+            syn.consumerBids.append(cb);
+        }
+        QStringList synHints;
+        const bool synOk = DataReader::validateRelations(syn, errors, synHints);
+        check(synOk, "平衡校验恒不阻断（V1.3 §3.2）");
+        const QString joined = synHints.join(QStringLiteral(" "));
+        check(synHints.size() >= 2, "平衡提示含逐时段 + 总量两条");
+        check(joined.contains("缺口") && joined.contains("100"),
+              "逐时段提示识别最大缺口 100 MW");
+        check(joined.contains("总量平衡") && joined.contains("-100"),
+              "总量提示识别偏差 -100 MW");
+        check(joined.contains("1/4"),
+              "逐时段提示统计偏差时段数 1/4");
+
+        // 平衡态：申报与负荷完全一致 → 无"缺口/过剩"字样
+        MarketData bal = syn;
+        for (auto &b : bal.consumerBids)
+        {
+            // 时段4 申报改回 400（与负荷一致）
+            if (b.period == 4)
+                b.quantity = 400.0;
+        }
+        QStringList balHints;
+        DataReader::validateRelations(bal, errors, balHints);
+        const QString balJoined = balHints.join(QStringLiteral(" "));
+        check(balJoined.contains("总量平衡") && balJoined.contains("+0.0"),
+              "平衡态总量偏差为 0");
+        check(!balJoined.contains("缺口") && !balJoined.contains("过剩"),
+              "平衡态无缺口/过剩字样");
     }
 
 
@@ -356,10 +380,6 @@ int main(
     scenarioFiles.loadCurveFile =
         repoRoot +
         "/data/samples/curves/load_curve.csv";
-
-    scenarioFiles.renewableOutputFile =
-        repoRoot +
-        "/data/samples/curves/renewable_output.csv";
 
     MarketData scenarioData;
 
@@ -472,9 +492,6 @@ int main(
 
         QVector<LoadPoint>
             loadPoints;
-
-        QVector<RenewableOutput>
-            renewable;
 
 
         // 表头错误
@@ -608,7 +625,7 @@ int main(
         writeTextFile(
             priceLimitFile,
             "机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
-            "G1,一号火电,火电,1,541.000,10.0\n");
+            "G1,一号火电,火电,1,1501.000,10.0\n");
 
         errors.clear();
 
@@ -620,7 +637,7 @@ int main(
 
         check(
             !ok,
-            "识别 0~540 电价限制");
+            "识别 0~1500 电价限制");
 
 
         // 电量为 0：V1.3 规则⑥允许（该时段不申报/停机）
@@ -769,27 +786,6 @@ int main(
             !ok,
             "识别负荷曲线不足 96 点");
 
-
-        // 新能源不足 96 点
-        const QString shortRenewableFile =
-            tempDir.path() +
-            "/short_renewable.csv";
-
-        writeTextFile(
-            shortRenewableFile,
-            buildRenewableCsv(95));
-
-        errors.clear();
-
-        ok =
-            DataReader::readRenewableOutput(
-                shortRenewableFile,
-                renewable,
-                errors);
-
-        check(
-            !ok,
-            "识别新能源机组不足 96 点");
     }
 
 

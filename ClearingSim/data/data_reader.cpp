@@ -299,7 +299,7 @@ bool parseDouble(
     return true;
 }
 
-// 申报价格检查（3 位小数、0~540 元/MWh；字段名随格式可变）
+// 申报价格检查（3 位小数、0~1500 元/MWh；字段名随格式可变）
 bool parseBidPrice(
     const QString &text,
     double &value,
@@ -320,13 +320,13 @@ bool parseBidPrice(
     }
 
     if (value < 0.0 ||
-        value > 540.0)
+        value > 1500.0)
     {
         addError(
             errors,
             prefix,
             QString(
-                "第 %1 行 %2 必须在 0~540 元/MWh")
+                "第 %1 行 %2 必须在 0~1500 元/MWh")
                 .arg(lineNumber)
                 .arg(fieldName));
 
@@ -1708,231 +1708,6 @@ bool DataReader::readLoadCurve(
 }
 
 
-// 新能源出力读取
-bool DataReader::readRenewableOutput(
-    const QString &filePath,
-    QVector<RenewableOutput> &data,
-    QStringList &errors)
-{
-    data.clear();
-    errors.clear();
-
-    const QStringList expectedHeader =
-        {
-            "机组ID",
-            "机组类型",
-            "时段",
-            "出力(MW)"
-        };
-
-    QVector<CsvRow> rows;
-
-    if (!readCsvRows(
-            filePath,
-            expectedHeader,
-            QString(),
-            rows,
-            errors))
-    {
-        return false;
-    }
-
-    const QSet<QString> allowedTypes =
-        {
-            "风电",
-            "光伏"
-        };
-
-    QVector<RenewableOutput> tempData;
-
-    QSet<QString> keys;
-
-    QHash<QString, QString>
-        typeByGenerator;
-
-    QHash<QString, QSet<int>>
-        periodsByGenerator;
-
-    for (const CsvRow &row : rows)
-    {
-        const QStringList &c =
-            row.columns;
-
-        RenewableOutput item;
-
-        item.generatorId = c[0];
-        item.generatorType = c[1];
-
-        bool rowValid = true;
-
-        if (!checkNotEmpty(
-                item.generatorId,
-                row.lineNumber,
-                "新能源机组 ID",
-                QString(),
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!checkNotEmpty(
-                item.generatorType,
-                row.lineNumber,
-                "新能源类型",
-                QString(),
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!allowedTypes.contains(
-                item.generatorType))
-        {
-            errors.append(
-                QString(
-                    "第 %1 行新能源类型只能为风电或光伏")
-                    .arg(row.lineNumber));
-
-            rowValid = false;
-        }
-
-        if (!parsePositiveInt(
-                c[2],
-                item.period,
-                row.lineNumber,
-                "时段",
-                QString(),
-                errors))
-        {
-            rowValid = false;
-        }
-        else if (item.period > 96)
-        {
-            errors.append(
-                QString(
-                    "第 %1 行时段必须在 1~96 范围内")
-                    .arg(row.lineNumber));
-
-            rowValid = false;
-        }
-
-        if (!parseNonNegativePower(
-                c[3],
-                item.output,
-                row.lineNumber,
-                "新能源出力",
-                errors))
-        {
-            rowValid = false;
-        }
-
-        if (!rowValid)
-        {
-            continue;
-        }
-
-        if (typeByGenerator.contains(
-                item.generatorId) &&
-            typeByGenerator.value(
-                item.generatorId) !=
-                item.generatorType)
-        {
-            errors.append(
-                QString(
-                    "第 %1 行机组 %2 的新能源类型与前面不一致")
-                    .arg(row.lineNumber)
-                    .arg(item.generatorId));
-
-            continue;
-        }
-
-        const QString key =
-            item.generatorId +
-            "|" +
-            QString::number(
-                item.period);
-
-        if (keys.contains(key))
-        {
-            errors.append(
-                QString(
-                    "第 %1 行机组 %2 在时段 %3 的新能源出力重复")
-                    .arg(row.lineNumber)
-                    .arg(item.generatorId)
-                    .arg(item.period));
-
-            continue;
-        }
-
-        keys.insert(key);
-
-        typeByGenerator[
-            item.generatorId] =
-            item.generatorType;
-
-        periodsByGenerator[
-            item.generatorId]
-            .insert(item.period);
-
-        tempData.push_back(item);
-    }
-
-    if (!errors.isEmpty())
-    {
-        return false;
-    }
-
-    for (auto it =
-         periodsByGenerator.cbegin();
-         it != periodsByGenerator.cend();
-         ++it)
-    {
-        const QString generatorId =
-            it.key();
-
-        const QSet<int> &periods =
-            it.value();
-
-        if (periods.size() != 96)
-        {
-            errors.append(
-                QString(
-                    "新能源机组 %1 必须包含 96 个时段，实际为 %2 个")
-                    .arg(generatorId)
-                    .arg(periods.size()));
-
-            continue;
-        }
-
-        for (int period = 1;
-             period <= 96;
-             ++period)
-        {
-            if (!periods.contains(period))
-            {
-                errors.append(
-                    QString(
-                        "新能源机组 %1 缺少时段 %2")
-                        .arg(generatorId)
-                        .arg(period));
-
-                break;
-            }
-        }
-    }
-
-    if (!errors.isEmpty())
-    {
-        data.clear();
-        return false;
-    }
-
-    data = tempData;
-
-    return true;
-}
-
-
 // 统一读取接口
 bool DataReader::readAll(
     const DataFileSet &files,
@@ -1990,21 +1765,6 @@ bool DataReader::readAll(
         allOk = false;
     }
 
-    fileErrors.clear();
-
-    if (!readRenewableOutput(
-            files.renewableOutputFile,
-            tempData.renewableOutputs,
-            fileErrors))
-    {
-        appendErrors(
-            "renewable_output.csv",
-            fileErrors,
-            errors);
-
-        allOk = false;
-    }
-
     if (!allOk)
     {
         data.clear();
@@ -2017,18 +1777,108 @@ bool DataReader::readAll(
 }
 
 
-// 跨文件一致性校验（V1.3 口径）
+// 跨文件一致性校验 + 供需平衡提示（契约 §3.2-3，负荷曲线职责②「平衡校验锚点」）
 //   - 新能源不再出现在申报表（D4），原「新能源机组需在 generator_bids 定义、
 //     类型一致」检查删除；
-//   - 购电申报与负荷曲线的平衡偏差改为 P1 非阻断提示（契约 §3.2，
-//     允许老师刻意做供需失衡场景），不再作为读取/校验错误。
+//   - 平衡校验为 P1 非阻断提示（契约 §3.2，允许老师刻意做供需失衡场景）：
+//     ① 逐时段口径：Σ用户申报量(t) vs 负荷(t)，汇总偏差时段数与最大缺/过剩；
+//     ② 总量口径：ΣΣ申报量 vs Σ负荷曲线。
+//   提示写入 hints（琥珀色展示），errors 仅承载阻断性错误（当前无）。
 bool DataReader::validateRelations(
     const MarketData &data,
-    QStringList &errors)
+    QStringList &errors,
+    QStringList &hints)
 {
     errors.clear();
+    hints.clear();
 
-    Q_UNUSED(data);
+    // 无负荷曲线（锚点缺失）或无购电申报（无可比对象）→ 静默通过
+    if (data.loadCurve.isEmpty() || data.consumerBids.isEmpty())
+        return true;
+
+    // 逐时段聚合购电申报量：period → Σquantity
+    QHash<int, double> bidByPeriod;
+    for (const auto &c : data.consumerBids)
+        bidByPeriod[c.period] += c.quantity;
+
+    int    periodsChecked = 0;
+    int    deviatingCount = 0;      // 偏差超容差的时段数
+    double maxShortMW = 0.0;        // 最大缺口（负荷 > 申报）
+    int    maxShortT = 0;
+    double maxSurplusMW = 0.0;      // 最大过剩（申报 > 负荷）
+    int    maxSurplusT = 0;
+    double totalLoad = 0.0;
+    double totalBid = 0.0;
+    double worstDevAbs = 0.0;       // 全时段最大绝对偏差（用于"基本平衡"提示）
+    int    worstDevT = 0;
+
+    for (const auto &lp : data.loadCurve)
+    {
+        const double bid = bidByPeriod.value(lp.period, 0.0);
+        ++periodsChecked;
+        totalLoad += lp.load;
+        totalBid  += bid;
+
+        const double gap = lp.load - bid;          // >0 缺口，<0 过剩
+        const double devAbs = std::abs(gap);
+        if (devAbs > 1.0)                          // 容差 1 MW：忽略申报取整尾差
+            ++deviatingCount;
+        if (devAbs > worstDevAbs)
+        {
+            worstDevAbs = devAbs;
+            worstDevT = lp.period;
+        }
+        if (gap > maxShortMW)    { maxShortMW = gap;     maxShortT = lp.period; }
+        if (-gap > maxSurplusMW) { maxSurplusMW = -gap;  maxSurplusT = lp.period; }
+    }
+
+    // 时段 → 时刻标注（负荷曲线带 time 列时附上，方便对图读数）
+    auto timeTag = [&data](int period) -> QString {
+        if (period <= 0)
+            return QString();
+        for (const auto &lp : data.loadCurve)
+            if (lp.period == period && !lp.time.isEmpty())
+                return QStringLiteral("（%1）").arg(lp.time);
+        return QString();
+    };
+
+    // ① 逐时段提示
+    if (deviatingCount == 0)
+    {
+        hints << QStringLiteral("逐时段平衡：全部 %1 个时段申报量与负荷预测偏差均 ≤1 MW")
+                     .arg(periodsChecked);
+    }
+    else
+    {
+        QString line = QStringLiteral("逐时段平衡：%1/%2 个时段申报与负荷偏差超 1 MW")
+                           .arg(deviatingCount)
+                           .arg(periodsChecked);
+        if (maxShortMW > 0.0)
+            line += QStringLiteral("；最大缺口 时段%1%2 申报较负荷少 %3 MW")
+                        .arg(maxShortT)
+                        .arg(timeTag(maxShortT))
+                        .arg(maxShortMW, 0, 'f', 1);
+        if (maxSurplusMW > 0.0)
+            line += QStringLiteral("；最大过剩 时段%1%2 申报较负荷多 %3 MW")
+                        .arg(maxSurplusT)
+                        .arg(timeTag(maxSurplusT))
+                        .arg(maxSurplusMW, 0, 'f', 1);
+        hints << line;
+    }
+
+    // ② 总量提示（带正负号与百分比）
+    if (totalLoad > 0.0)
+    {
+        const double dev = totalBid - totalLoad;
+        const double devPct = dev / totalLoad * 100.0;
+        hints << QStringLiteral("总量平衡：申报合计 %1 MW · 负荷预测合计 %2 MW · 偏差 %3%4 MW（%5%6%）")
+                     .arg(totalBid, 0, 'f', 1)
+                     .arg(totalLoad, 0, 'f', 1)
+                     .arg(dev >= 0 ? QStringLiteral("+") : QStringLiteral("-"))
+                     .arg(std::abs(dev), 0, 'f', 1)
+                     .arg(dev >= 0 ? QStringLiteral("+") : QStringLiteral("-"))
+                     .arg(std::abs(devPct), 0, 'f', 1);
+    }
 
     return true;
 }

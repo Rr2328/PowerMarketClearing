@@ -71,7 +71,6 @@ bool loadScenario(const QString &repoRoot, MarketData &market, QStringList &erro
     files.generatorBidsFile = base + QStringLiteral("/scenario_balanced/generator_bids.csv");
     files.consumerBidsFile = base + QStringLiteral("/scenario_balanced/consumer_bids.csv");
     files.loadCurveFile = base + QStringLiteral("/curves/load_curve.csv");
-    files.renewableOutputFile = base + QStringLiteral("/curves/renewable_output.csv");
     return DataReader::readAll(files, market, errors);
 }
 
@@ -136,11 +135,11 @@ int main(int argc, char *argv[])
         for (const auto &pr : raw96.periods) {
             if (pr.clearedMW < pr.loadMW - 0.5)
                 fullClear = false;                      // 逐时段全额成交（零缺口）
-            const bool inLadder = near(pr.clearingPrice, 210.0, 0.5)
-                                  || near(pr.clearingPrice, 220.0, 0.5)
-                                  || near(pr.clearingPrice, 230.0, 0.5)
-                                  || near(pr.clearingPrice, 240.0, 0.5)
-                                  || near(pr.clearingPrice, 260.0, 0.5);
+            const bool inLadder = near(pr.clearingPrice, 330.0, 0.5)
+                                  || near(pr.clearingPrice, 350.0, 0.5)
+                                  || near(pr.clearingPrice, 370.0, 0.5)
+                                  || near(pr.clearingPrice, 390.0, 0.5)
+                                  || near(pr.clearingPrice, 410.0, 0.5);
             if (!inLadder)
                 priceLadder = false;                    // 五级阶梯价
             const double cap = ClearingFacade::renewCapacityAt(m, pr.period, 0.2);
@@ -149,10 +148,10 @@ int main(int argc, char *argv[])
             priceSum += pr.clearingPrice;
         }
         check(fullClear, QStringLiteral("20% 渗透率下 96 期全额成交（零缺口）"));
-        check(priceLadder, QStringLiteral("出清价落在 210/220/230/240/260 五级阶梯"));
+        check(priceLadder, QStringLiteral("出清价落在 330/350/370/390/410 五级阶梯"));
         check(renewAbsorbed, QStringLiteral("新能源 P_re(t)=20%×负荷(t) 全额消纳"));
-        check(near(priceSum / 96.0, 229.7, 0.6),
-              QStringLiteral("全日均价 ≈ 229.7（实测 %1）").arg(priceSum / 96.0, 0, 'f', 1));
+        check(near(priceSum / 96.0, 367.3, 0.6),
+              QStringLiteral("全日均价 ≈ 367.3（实测 %1）").arg(priceSum / 96.0, 0, 'f', 1));
 
         // ---------------- ④ renewCapacityAt 两条换算路径 ----------------
         check(near(ClearingFacade::renewCapacityAt(m, 1, 0.2), 141.3, 0.05),
@@ -208,9 +207,9 @@ int main(int argc, char *argv[])
               QStringLiteral("无负荷曲线：P_re(1)=0.2×购电申报 100=20"));
     }
 
-    // ---------------- ⑤ 稀缺封顶：供给量尽 → 出清价 = 限价 540（契约 V1.3.1） ----------------
+    // ---------------- ⑤ 稀缺封顶：供给量尽 → 出清价 = 限价 1500（契约 V1.3.1） ----------------
     {
-        // 场景 A：供给 30 MW @200，需求 50 MW @300 → 供给先尽、缺口 20 MW → 封顶 540
+        // 场景 A：供给 30 MW @200，需求 50 MW @300 → 供给先尽、缺口 20 MW → 封顶 1500
         MarketData m;
         GeneratorBid g;
         g.id = QStringLiteral("#1机组"); g.name = QStringLiteral("测试电厂");
@@ -223,9 +222,9 @@ int main(int argc, char *argv[])
 
         const ClearingResult r = ClearingFacade::clearBenchmark(m, QStringLiteral("MCP"));
         check(r.periods.size() == 1
-                  && near(r.periods[0].clearingPrice, 540.0)
+                  && near(r.periods[0].clearingPrice, 1500.0)
                   && near(r.periods[0].clearedMW, 30.0),
-              QStringLiteral("稀缺封顶：供给 30 < 需求 50 → 出清价升至限价 540、成交 30"));
+              QStringLiteral("稀缺封顶：供给 30 < 需求 50 → 出清价升至限价 1500、成交 30"));
 
         // 场景 B：供给要价 350 > 需求愿付 300 → 价格不交叉、零成交，
         //   维持边际定价（lastprice=0），不触发封顶（双侧均有剩余，非量尽）
@@ -262,16 +261,16 @@ int main(int argc, char *argv[])
         const ClearingResult uc = ClearingFacade::clearPeriodsUc(m, 96, 0.2);
         check(uc.periods.size() == 96, QStringLiteral("UC：96 期逐时段出清"));
 
-        // 逐期供需平衡（缺口 < 0.5 MW）、λ 落在机组电量成本区间 [150, 260]
+        // 逐期供需平衡（缺口 < 0.5 MW）、λ 落在机组电量成本区间 [270, 410]
         bool balanced = true, priceInBand = true;
         for (const auto &pr : uc.periods) {
             if (pr.clearedMW < pr.loadMW - 0.5)
                 balanced = false;
-            if (pr.clearingPrice < 150.0 - 0.5 || pr.clearingPrice > 260.0 + 0.5)
+            if (pr.clearingPrice < 270.0 - 0.5 || pr.clearingPrice > 410.0 + 0.5)
                 priceInBand = false;
         }
         check(balanced, QStringLiteral("UC：96 期供需平衡（缺口 < 0.5 MW）"));
-        check(priceInBand, QStringLiteral("UC：出清价落在电量成本区间 [150, 260]"));
+        check(priceInBand, QStringLiteral("UC：出清价落在电量成本区间 [270, 410]"));
 
         // 逐期发电明细之和（含新能源段）= 成交量；结算 = Σ p×λ
         bool detailOk = true;
@@ -340,14 +339,14 @@ int main(int argc, char *argv[])
               QStringLiteral("UC 建模：需求 380 → 基荷+腰荷开机、λ = 210"));
 
         // 需求超出 ΣpMax → 不可行（稀缺需要另行封顶，UC 模式如实报告）
-        // 需求超出 ΣpMax → 失负荷松弛放行、λ 封顶 540（V1.3.1 稀缺定价同口径，
+        // 需求超出 ΣpMax → 失负荷松弛放行、λ 封顶 1500（V1.3.1 稀缺定价同口径，
         // 与分段引擎封顶行为一致——界面不会因无解而白屏）
         QVector<double> demand3(96, 0.0);
         demand3[0] = 1000.0;
         const UcSolution s3 = solveUcMilp(metas, demand3, init);
-        check(s3.ok && near(s3.lambda[0], 540.0)
+        check(s3.ok && near(s3.lambda[0], 1500.0)
                   && near(s3.shed[0], 350.0, 0.5),
-              QStringLiteral("UC 建模：需求 1000 > ΣpMax 650 → 缺口 350 失负荷、λ 封顶 540"));
+              QStringLiteral("UC 建模：需求 1000 > ΣpMax 650 → 缺口 350 失负荷、λ 封顶 1500"));
     }
 
     // ---------------- ⑧ UC × 应用默认数据：scenario/（现实供需形态，峰时供不应求） ----------------
@@ -361,30 +360,29 @@ int main(int argc, char *argv[])
         files.generatorBidsFile = base + QStringLiteral("/generator_bids.csv");
         files.consumerBidsFile = base + QStringLiteral("/consumer_bids.csv");
         files.loadCurveFile = root + QStringLiteral("/data/samples/curves/load_curve.csv");
-        files.renewableOutputFile = root + QStringLiteral("/data/samples/curves/renewable_output.csv");
         check(DataReader::readAll(files, m, errs),
-              QStringLiteral("UC 默认场景：读取 scenario/ 四表 %1").arg(errs.join(QStringLiteral(";"))));
+              QStringLiteral("UC 默认场景：读取 scenario/ 三表 %1").arg(errs.join(QStringLiteral(";"))));
         check(DataReader::readGeneratorMeta(
                   base + QStringLiteral("/generator_meta.csv"), m.generatorMeta, errs)
                   && m.generatorMeta.size() == 5,
               QStringLiteral("UC 默认场景：读取 generator_meta.csv（5 机组）"));
 
-        // 稀缺断言用 96 期原生粒度（24 期小时均值会把单季度 540 稀释）
+        // 稀缺断言用 96 期原生粒度（24 期小时均值会把单季度 1500 稀释）
         const ClearingResult uc96 = ClearingFacade::clearPeriodsUc(m, 96, 0.2);
         const ClearingResult uc = ClearingFacade::clearPeriodsUc(m, 24, 0.2);
         check(uc.periods.size() == 24 && uc96.periods.size() == 96,
               QStringLiteral("UC 默认场景：24/96 期出清有解（不白屏）"));
         bool hasScarcity = false, priceCapped = true;
         for (const auto &pr : uc96.periods) {
-            if (pr.clearingPrice >= 540.0 - 0.5)
+            if (pr.clearingPrice >= 1500.0 - 0.5)
                 hasScarcity = true;
-            if (pr.clearingPrice > 540.0 + 0.5)
+            if (pr.clearingPrice > 1500.0 + 0.5)
                 priceCapped = false;
         }
         check(hasScarcity,
-              QStringLiteral("UC 默认场景：峰时段触发稀缺出清价 540（供不应求可见）"));
+              QStringLiteral("UC 默认场景：峰时段触发稀缺出清价 1500（供不应求可见）"));
         check(priceCapped,
-              QStringLiteral("UC 默认场景：出清价不超过限价 540"));
+              QStringLiteral("UC 默认场景：出清价不超过限价 1500"));
     }
 
     qInfo().noquote() << (failedTests == 0

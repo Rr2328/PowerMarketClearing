@@ -5,7 +5,6 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
-#include <QSet>
 
 #include <cmath>
 
@@ -136,10 +135,6 @@ int main(
         repoRoot +
         "/data/samples/curves/load_curve.csv";
 
-    files.renewableOutputFile =
-        repoRoot +
-        "/data/samples/curves/renewable_output.csv";
-
     MarketData data;
     QStringList errors;
 
@@ -205,41 +200,6 @@ int main(
     }
 
 
-    // 新能源 96→24
-    QVector<RenewableOutput> renewable24;
-
-    errors.clear();
-
-    ok =
-        ScenarioManager::
-        aggregateRenewableTo24(
-            data.renewableOutputs,
-            renewable24,
-            errors);
-
-    check(
-        ok,
-        "新能源 96→24 聚合");
-
-    QSet<QString> renewableIds;
-
-    for (const RenewableOutput &item :
-         data.renewableOutputs)
-    {
-        renewableIds.insert(
-            item.generatorId);
-    }
-
-    check(
-        renewable24.size() ==
-            renewableIds.size() * 24,
-        "24 时段新能源数量正确");
-
-    if (!ok)
-    {
-        printErrors(errors);
-    }
-
 
     // 构建 96 时段场景
     QVector<PeriodScenario> scenarios96;
@@ -261,17 +221,6 @@ int main(
     check(
         scenarios96.size() == 96,
         "96 时段场景数量正确");
-
-    if (ok &&
-        !scenarios96.isEmpty())
-    {
-        check(
-            scenarios96[0]
-                    .renewableBase
-                    .size() ==
-                renewableIds.size(),
-            "96 时段场景包含全部新能源机组");
-    }
 
     if (!ok)
     {
@@ -299,17 +248,6 @@ int main(
     check(
         scenarios24.size() == 24,
         "24 时段场景数量正确");
-
-    if (ok &&
-        !scenarios24.isEmpty())
-    {
-        check(
-            scenarios24[0]
-                    .renewableBase
-                    .size() ==
-                renewableIds.size(),
-            "24 时段场景包含全部新能源机组");
-    }
 
     if (!ok)
     {
@@ -359,34 +297,6 @@ int main(
     check(
         !ok,
         "识别负荷时段缺失");
-
-
-    // 缺失新能源时段
-    MarketData brokenRenewable =
-        data;
-
-    if (!brokenRenewable
-             .renewableOutputs
-             .isEmpty())
-    {
-        brokenRenewable
-            .renewableOutputs
-            .removeLast();
-    }
-
-    errors.clear();
-
-    ok =
-        ScenarioManager::
-        buildPeriodScenarios(
-            brokenRenewable,
-            96,
-            invalidScenarios,
-            errors);
-
-    check(
-        !ok,
-        "识别新能源时段缺失");
 
 
     qInfo().noquote()

@@ -163,8 +163,6 @@ target_include_directories(ClearingFacadeTest
 
 
 # V1.3 数据流水线端到端集成测试（CSV → DataReader → ScenarioManager → ClearingFacade）
-# 借鉴 origin/feature/data-model 的端到端集成测试思路（陈美伊 2137534），
-# 但适配到 V1.3 长表结构（bid 不带 period 字段、按 name+id 复合主体标识）
 
 qt_add_executable(DataPipelineIntegrationTest
     data/data_pipeline_integration_test.cpp
