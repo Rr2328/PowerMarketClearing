@@ -3,6 +3,10 @@
 #include <QFile>
 #include <QTextStream>
 
+namespace teammate
+{
+
+
 // 拆分 CSV 行并清理字段
 QStringList splitCsvLine(const QString &line)
 {
@@ -136,3 +140,5 @@ void appendErrors(const QString &fileName,const QStringList &sourceErrors,QStrin
         targetErrors.append("[" +fileName +"] " +error);
     }
 }
+
+} // namespace teammate

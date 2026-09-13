@@ -25,6 +25,10 @@ qt_add_executable(ClearingSim
 
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/csv_utils.h
     data/csv_utils.cpp
     data/data_validator.h
@@ -84,6 +88,10 @@ install(SCRIPT ${deploy_script})
 qt_add_executable(DataReaderTest
     data/data_reader_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -104,6 +112,10 @@ qt_add_executable(ScenarioManagerTest
     data/scenario_manager.cpp
     data/scenario_manager.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -122,6 +134,10 @@ endif()
 qt_add_executable(MarketDataIntegrationTest
     data/market_data_integration_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -148,6 +164,10 @@ qt_add_executable(ClearingFacadeTest
     engine/clearing_engine.cpp
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     quadratic_clearing.h
     quadratic_clearing.cpp
     uc/uc_solver.h
@@ -171,6 +191,10 @@ target_include_directories(ClearingFacadeTest
 qt_add_executable(DataPipelineIntegrationTest
     data/data_pipeline_integration_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/scenario_manager.cpp
     data/scenario_manager.h
@@ -229,6 +253,10 @@ qt_add_executable(QuadraticClearingTest
     quadratic_clearing.cpp
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     core/clearing_facade.h
     core/clearing_facade.cpp
     engine/clearing_engine.h

@@ -157,19 +157,28 @@ bool ScenarioManager::buildPeriodScenarios(
     }
     else if (periodCount == 24)
     {
-        QStringList tempErrors;
-
-        if (!aggregateLoadTo24(
-                data.loadCurve,
-                loadData,
-                tempErrors))
+        if (data.loadCurve.size() == 24)
         {
-            errors.append(tempErrors);
+            // 负荷已是 24 时段口径（如聚合合成视图），直接使用
+            loadData =
+                data.loadCurve;
         }
-
-        if (!errors.isEmpty())
+        else
         {
-            return false;
+            QStringList tempErrors;
+
+            if (!aggregateLoadTo24(
+                    data.loadCurve,
+                    loadData,
+                    tempErrors))
+            {
+                errors.append(tempErrors);
+            }
+
+            if (!errors.isEmpty())
+            {
+                return false;
+            }
         }
     }
     else

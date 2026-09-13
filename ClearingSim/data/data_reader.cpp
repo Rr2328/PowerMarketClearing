@@ -1,5 +1,8 @@
 #include "data_reader.h"
 
+#include "csv_utils.h"
+#include "data_validator.h"
+
 #include <QFile>
 #include <QHash>
 #include <QMap>
@@ -35,24 +38,10 @@ void addError(
     }
 }
 
-// CSV 行分割
+// CSV 行分割（数据模块：陈美伊 csv_utils）
 QStringList splitCsvLine(const QString &line)
 {
-    QStringList columns =
-        line.split(',', Qt::KeepEmptyParts);
-
-    for (QString &column : columns)
-    {
-        column = column.trimmed();
-    }
-
-    if (!columns.isEmpty() &&
-        columns[0].startsWith(QChar(0xFEFF)))
-    {
-        columns[0].remove(0, 1);
-    }
-
-    return columns;
+    return teammate::splitCsvLine(line);
 }
 
 // CSV 公共读取函数
@@ -171,7 +160,7 @@ bool readCsvRows(
     return errors.isEmpty();
 }
 
-// 空字段检查
+// 空字段检查（数据模块：陈美伊 data_validator）
 bool checkNotEmpty(
     const QString &value,
     int lineNumber,
@@ -179,22 +168,20 @@ bool checkNotEmpty(
     const QString &prefix,
     QStringList &errors)
 {
-    if (value.trimmed().isEmpty())
-    {
-        addError(
-            errors,
-            prefix,
-            QString("第 %1 行 %2 为空")
-                .arg(lineNumber)
-                .arg(fieldName));
+    QStringList local;
 
-        return false;
+    const bool ok = teammate::checkNotEmpty(
+        value, lineNumber, fieldName, local);
+
+    for (const QString &error : local)
+    {
+        addError(errors, prefix, error);
     }
 
-    return true;
+    return ok;
 }
 
-// 正整数检查
+// 正整数检查（数据模块：陈美伊 data_validator）
 bool parsePositiveInt(
     const QString &text,
     int &value,
@@ -203,38 +190,17 @@ bool parsePositiveInt(
     const QString &prefix,
     QStringList &errors)
 {
-    bool ok = false;
+    QStringList local;
 
-    value = text.toInt(&ok);
+    const bool ok = teammate::parsePositiveInt(
+        text, value, lineNumber, fieldName, local);
 
-    if (!ok)
+    for (const QString &error : local)
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 不是有效整数：%3")
-                .arg(lineNumber)
-                .arg(fieldName)
-                .arg(text));
-
-        return false;
+        addError(errors, prefix, error);
     }
 
-    if (value <= 0)
-    {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 必须大于 0")
-                .arg(lineNumber)
-                .arg(fieldName));
-
-        return false;
-    }
-
-    return true;
+    return ok;
 }
 
 // 小数位数检查
@@ -268,7 +234,7 @@ bool checkPrecision(
     return true;
 }
 
-// 浮点数检查
+// 浮点数检查（数据模块：陈美伊 data_validator）
 bool parseDouble(
     const QString &text,
     double &value,
@@ -277,26 +243,17 @@ bool parseDouble(
     const QString &prefix,
     QStringList &errors)
 {
-    bool ok = false;
+    QStringList local;
 
-    value = text.toDouble(&ok);
+    const bool ok = teammate::parseDouble(
+        text, value, lineNumber, fieldName, local);
 
-    if (!ok ||
-        !std::isfinite(value))
+    for (const QString &error : local)
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 不是有效数字：%3")
-                .arg(lineNumber)
-                .arg(fieldName)
-                .arg(text));
-
-        return false;
+        addError(errors, prefix, error);
     }
 
-    return true;
+    return ok;
 }
 
 // 申报价格检查（3 位小数、0~1500 元/MWh；字段名随格式可变）
@@ -319,18 +276,20 @@ bool parseBidPrice(
         return false;
     }
 
-    if (value < 0.0 ||
-        value > 1500.0)
+    // 报价范围（0~1500 元/MWh，数据模块：陈美伊 data_validator）
     {
-        addError(
-            errors,
-            prefix,
-            QString(
-                "第 %1 行 %2 必须在 0~1500 元/MWh")
-                .arg(lineNumber)
-                .arg(fieldName));
+        QStringList local;
 
-        return false;
+        if (!teammate::checkPriceRange(
+                value, lineNumber, fieldName, local))
+        {
+            for (const QString &error : local)
+            {
+                addError(errors, prefix, error);
+            }
+
+            return false;
+        }
     }
 
     if (!checkPrecision(
@@ -512,18 +471,13 @@ QString expectedTime(int period)
             QChar('0'));
 }
 
-// 合并错误信息
+// 合并错误信息（数据模块：陈美伊 csv_utils）
 void appendErrors(
     const QString &fileName,
     const QStringList &sourceErrors,
     QStringList &targetErrors)
 {
-    for (const QString &error : sourceErrors)
-    {
-        targetErrors.append(
-            "[" + fileName + "] " +
-            error);
-    }
+    teammate::appendErrors(fileName, sourceErrors, targetErrors);
 }
 
 // ------------------------------------------------------------------

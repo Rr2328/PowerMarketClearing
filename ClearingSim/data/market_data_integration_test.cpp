@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSet>
+#include <cmath>
 // MarketData 集成测试 V1.3：校验 CSV → MarketData → PeriodScenario 全链路数据流转。
 namespace
 {
@@ -66,7 +67,7 @@ DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
     files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids.csv");
     files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids.csv");
     files.loadCurveFile =QDir(scenarioDir).filePath("load_curve.csv");
-    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output.csv");
+    // V1.3.5 契约：新能源不进申报表（RENEW = 渗透率 × 负荷），无独立新能源文件。
     return files;
 }
 
@@ -201,16 +202,6 @@ QSet<QString> consumerIds(const QVector<ConsumerBid> &data)
     }
     return ids;
 }
-// 提取新能源机组 ID 集合。
-QSet<QString> renewableIds(const QVector<RenewableOutput> &data)
-{
-    QSet<QString> ids;
-    for (const RenewableOutput &item : data)
-    {
-        ids.insert(item.generatorId);
-    }
-    return ids;
-}
 // 校验单时段场景的负荷与 MarketData 负荷曲线一致（V1.3.5：场景仅承载负荷口径）。
 bool scenarioMatchesMarketData(const PeriodScenario &scenario,const MarketData &data)
 {
@@ -283,7 +274,7 @@ int main(int argc,char *argv[])
     check(ok,"96 时段 CSV → MarketData");
     if (ok)
     {
-        ok =pipelineFromData(data96,96,TimeGranularity::QuarterHourly96);
+        ok =pipelineFromData(data96,96);
     }
     else
     {
