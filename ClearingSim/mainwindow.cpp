@@ -116,10 +116,19 @@ MainWindow::MainWindow(QWidget *parent)
     });
     navCol->addWidget(m_nav);
 
-    auto *navFooter = new QLabel(QStringLiteral("V 1.1 · 真实数据模式"));
+    auto *navFooter = new QLabel(QStringLiteral("V 1.3.5"));
     navFooter->setObjectName("navFooter");
     navCol->addSpacing(6);
     navCol->addWidget(navFooter);
+
+    // 导航下方随页说明：切页即换，放各页必要、合理的操作指导
+    m_navHint = new QLabel;
+    m_navHint->setObjectName("navHint");
+    m_navHint->setWordWrap(true);
+    m_navHint->setText(QStringLiteral(
+        "一键演示：主界面右上角「⚡ 一键演示」加载内置基准例（两机组 · 单时段对拍出清：250 元/MWh / 50 MWh / 12500 元），秒级验证出清链路；本页「📂 加载内置样例」则载入完整场景（5 机组 · 3 用户）跑 96 时段连续出清，也支持本地 CSV 导入。申报形式在此页选定，与数据绑定生效。"));
+    navCol->addSpacing(14);
+    navCol->addWidget(m_navHint);
     navCol->addStretch();
 
     // ---------- 右侧内容区 ----------
@@ -130,8 +139,20 @@ MainWindow::MainWindow(QWidget *parent)
     m_stack->addWidget(buildChartPage());
     m_stack->addWidget(buildExportPage());
 
+    // 切页联动：右侧页面 + 导航下方说明同步切换
+    static const char *kNavHints[] = {
+        "一键演示：主界面右上角「⚡ 一键演示」加载内置基准例（两机组 · 单时段对拍出清：250 元/MWh / 50 MWh / 12500 元），秒级验证出清链路；本页「📂 加载内置样例」则载入完整场景（5 机组 · 3 用户）跑 96 时段连续出清，也支持本地 CSV 导入。申报形式在此页选定，与数据绑定生效。",
+        "出清机制、时段颗粒度、渗透率改动后自动重新出清；新能源出力 = 渗透率 × 负荷，无独立申报。",
+        "视角只切换显示口径、不重算：平台视角看全局 KPI，发电 / 购电视角看主体明细。",
+        "电价与供需截面均为真实出清结果；供需截面可下拉切换时段，零申报量时段不绘制。",
+        "结算日报按当前视角导出：平台 = 逐时段全局表；发电 / 购电 = 逐主体明细表。",
+    };
     connect(m_nav, &QListWidget::currentRowChanged,
             m_stack, &QStackedWidget::setCurrentIndex);
+    connect(m_nav, &QListWidget::currentRowChanged, this, [this](int row) {
+        if (m_navHint && row >= 0 && row < 5)
+            m_navHint->setText(QString::fromUtf8(kNavHints[row]));
+    });
     connect(m_nav, &QListWidget::currentRowChanged,
             this, &MainWindow::updatePageHeader);
     m_nav->setCurrentRow(0);
@@ -158,7 +179,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setCentralWidget(m_rootStack);
 
-    statusBar()->showMessage(QStringLiteral("就绪 · 数据接入 A 模块 · 出清已接 B 位真实算法（MCP/PAB 双模式）"));
+    statusBar()->showMessage(QStringLiteral("就绪 · MCP / PAB 双模式 · 96 时段连续出清"));
 
     applyStyle();
 }
@@ -238,7 +259,7 @@ QWidget *MainWindow::buildCoverPage()
     auto *brandText = new QLabel(QStringLiteral("SEU · 电力市场课程设计"), page);
     brandText->setObjectName("coverBrandText");
 
-    auto *version = new QLabel(QStringLiteral("V 1.1"), page);
+    auto *version = new QLabel(QStringLiteral("V 1.3.5"), page);
     version->setObjectName("coverVersion");
     version->setAlignment(Qt::AlignCenter);
 
@@ -350,7 +371,7 @@ QWidget *MainWindow::buildImportPage()
     auto *page = new QWidget();
 
     // --- 上：申报数据双页签（发电侧 / 购电侧，随视角隐藏） ---
-    auto *bidBox = new QGroupBox(QStringLiteral("申报数据（A 模块 · 真实读取与校验）"), page);
+    auto *bidBox = new QGroupBox(QStringLiteral("申报数据"), page);
 
     m_importTabs = new QTabWidget(bidBox);
 
@@ -393,11 +414,11 @@ QWidget *MainWindow::buildImportPage()
                                    .arg(QTime(0, 0).addSecs(to * 60).toString(QStringLiteral("HH:mm"))));
     }
     m_periodCombo->setToolTip(QStringLiteral(
-        "V1.3 原生粒度 96 期（15 分钟/期）：选择时段后，下方申报表只显示该时段的申报，编辑即写回该时段"));
+        "原生粒度 96 期（15 分钟/期）：选择时段后，下方申报表只显示该时段的申报，编辑即写回该时段"));
     auto *prefillBtn = new QPushButton(QStringLiteral("⚡ 按负荷预填本时段"), bidBox);
     prefillBtn->setObjectName("secondaryBtn");
     prefillBtn->setToolTip(QStringLiteral(
-        "按负荷曲线形状预填当前时段：购电/发电申报量同乘 负荷(t)/平均负荷（保持供需结构，需已加载负荷曲线）"));
+        "按负荷曲线形状预填当前时段：购电/发电申报量同乘 该时段负荷(t)/日平均负荷(内置负荷曲线数据)"));
     m_periodHint = new QLabel(bidBox);
     m_periodHint->setObjectName("paramSummary");
     periodRow->addWidget(periodLbl);
@@ -440,7 +461,7 @@ QWidget *MainWindow::buildImportPage()
     loadBtn->setObjectName("secondaryBtn");
     csvBtn->setObjectName("secondaryBtn");
     clearBtn->setObjectName("secondaryBtn");
-    loadBtn->setToolTip(QStringLiteral("一键加载仓库内置样例（8 机组 + 3 用户，可跑 24/96 时段连续出清）"));
+    loadBtn->setToolTip(QStringLiteral("一键加载内置样例（5 机组 + 3 用户，可跑 96 时段连续出清）"));
     csvBtn->setToolTip(QStringLiteral("选择 2 个 CSV（发电申报 / 购电申报），按文件名自动识别"));
     connect(loadBtn, &QPushButton::clicked, this, &MainWindow::onLoadSamples);
     connect(csvBtn,  &QPushButton::clicked, this, &MainWindow::onImportCsv);
@@ -459,40 +480,44 @@ QWidget *MainWindow::buildImportPage()
     bidLay->addWidget(m_importTabs);
     bidLay->addLayout(btnRow);
 
-    // --- 中：数据集状态卡（真实导入状态；新能源由 P2 滑块控制，不占导入表） ---
-    struct DataSet { const char *name; const char *desc; };
-    const DataSet sets[2] = {
-                              {"发电申报",   "generator_bids.csv"},
-                              {"购电申报",   "consumer_bids.csv"},
-                              };
+    // --- 中：校验规则 | 编辑提醒 双栏（替代原文件就绪状态卡） ---
+    //   左栏静态展示申报校验规则；右栏动态反馈每次表格编辑的结果（越界不再静默拒绝）
+    auto *ruleCard = new QWidget(page);
+    ruleCard->setObjectName("ruleCard");
+    {
+        auto *rl = new QVBoxLayout(ruleCard);
+        rl->setContentsMargins(14, 12, 14, 12);
+        rl->setSpacing(6);
+        auto *title = new QLabel(QStringLiteral("校验规则"), ruleCard);
+        title->setObjectName("ruleCardTitle");
+        auto *text = new QLabel(
+            QStringLiteral("段数 ≤ 5 · 报价单调递增 · 电价 0~1500 元/MWh · 电量 ≥ 0 · 跨文件主体名称一致"),
+            ruleCard);
+        text->setObjectName("ruleCardText");
+        text->setWordWrap(true);
+        rl->addWidget(title);
+        rl->addWidget(text);
+    }
+
+    auto *hintCard = new QWidget(page);
+    hintCard->setObjectName("ruleCard");
+    {
+        auto *hl = new QVBoxLayout(hintCard);
+        hl->setContentsMargins(14, 12, 14, 12);
+        hl->setSpacing(6);
+        auto *title = new QLabel(QStringLiteral("编辑提醒"), hintCard);
+        title->setObjectName("ruleCardTitle");
+        m_editHint = new QLabel(QStringLiteral("—　在申报表中修改电价 / 电量后，此处显示校验结果；越界输入会被恢复原值"), hintCard);
+        m_editHint->setObjectName("editHintIdle");
+        m_editHint->setWordWrap(true);
+        hl->addWidget(title);
+        hl->addWidget(m_editHint);
+    }
+
     auto *setRow = new QHBoxLayout();
     setRow->setSpacing(10);
-    for (int i = 0; i < 2; ++i) {
-        auto *card = new QWidget(page);
-        card->setObjectName("statusCard");
-        auto *name = new QLabel(QString::fromUtf8(sets[i].name), card);
-        name->setObjectName("statusCardName");
-        if (i == 0)
-            m_genCardName = name;      // 发电侧卡片名称随申报形式联动（V1.3.2）
-        auto *badge = new QLabel(QStringLiteral("未导入"), card);
-        badge->setObjectName("statusBadgeWait");
-        badge->setAlignment(Qt::AlignCenter);
-        auto *desc = new QLabel(QString::fromUtf8(sets[i].desc), card);
-        desc->setObjectName("statusCardDesc");
-        if (i == 0)
-            m_genCardDesc = desc;      // 发电侧卡片文件说明随申报形式联动（V1.3.2）
-        auto *top = new QHBoxLayout();
-        top->addWidget(name);
-        top->addStretch();
-        top->addWidget(badge);
-        auto *l = new QVBoxLayout(card);
-        l->setContentsMargins(14, 12, 14, 12);
-        l->setSpacing(6);
-        l->addLayout(top);
-        l->addWidget(desc);
-        setRow->addWidget(card, 1);
-        m_statusBadges[i] = badge;
-    }
+    setRow->addWidget(ruleCard, 2);
+    setRow->addWidget(hintCard, 3);
 
     // --- 下：校验反馈汇总条（A 模块真实校验结果） ---
     auto *checkBar = new QWidget(page);
@@ -534,20 +559,19 @@ QWidget *MainWindow::buildControlPage()
     m_readyLabel->setText(QStringLiteral(
         "数据状态：<span style='color:#C0392B;'>●</span> <b>待导入</b>（请先在①数据导入加载申报数据）"));
 
-    // --- 出清模式：MCP / PAB 两张模式卡 ---
+    // --- 结算方式：MCP / PAB 两张模式卡（modeCardSub：浅底无描边，与上排机制卡区分）---
     m_btnMcp = new QPushButton();
-    m_btnMcp->setObjectName("modeCard");
+    m_btnMcp->setObjectName("modeCardSub");
     m_btnMcp->setCheckable(true);
     m_btnMcp->setChecked(true);
     m_btnMcp->setAutoExclusive(true);
-    m_btnMcp->setToolTip(QStringLiteral("创新点②：双模式报价出清，依据细则第 63 条"));
     m_btnMcp->setText(QStringLiteral(
         "MCP · 边际出清（统一出清价）\n"
         "统一按边际机组的报价出清，全部中标机组同价结算。\n"
         "规则最直观，适合首轮验证与教学演示。"));
 
     m_btnPab = new QPushButton();
-    m_btnPab->setObjectName("modeCard");
+    m_btnPab->setObjectName("modeCardSub");
     m_btnPab->setCheckable(true);
     m_btnPab->setAutoExclusive(true);
     m_btnPab->setText(QStringLiteral(
@@ -560,20 +584,41 @@ QWidget *MainWindow::buildControlPage()
     modeRow->addWidget(m_btnMcp, 1);
     modeRow->addWidget(m_btnPab, 1);
 
-    // --- 出清机制（S4）：分段撮合 / SCUC 机组组合（求解器） ---
-    //   UC 为第三种出清引擎：由 generator_meta.csv 的机组参数经 HiGHS
-    //   MILP 求解开停机与出力，出清价 = 经济调度功率平衡对偶。
-    //   UC 机制下结算恒为统一出清价（MCP 同构），故禁用 MCP/PAB 结算卡。
-    m_engineCombo = new QComboBox();
-    m_engineCombo->addItems({
-        QStringLiteral("分段报价撮合（MCP / PAB 结算）"),
-        QStringLiteral("SCUC 机组组合（HiGHS 求解器定价）"),
-    });
-    m_engineCombo->setToolTip(QStringLiteral(
-        "SCUC 机组组合：求解器决定全天 96 期的开停机与出力——\n"
-        "最小技术出力（pMin 基础量）、爬坡限速、最小开/停机时间、启动费用\n"
-        "全部作为约束参与优化；出清价 = 经济调度的功率平衡对偶变量。\n"
-        "要求当前数据目录含 generator_meta.csv。"));
+    // MCP/PAB 结算卡容器：SCUC 机制下整行隐藏（布局自然上收，不置灰占位）
+    m_mcpRowWrap = new QWidget();
+    {
+        auto *wrapLay = new QVBoxLayout(m_mcpRowWrap);
+        wrapLay->setContentsMargins(0, 0, 0, 0);
+        wrapLay->addLayout(modeRow);
+    }
+
+    // --- 出清机制（S4）：两张机制卡（原下拉框升级）---
+    //   分段报价撮合 = MCP / PAB 双结算可选；SCUC = HiGHS 求解器定价，
+    //   结算恒为统一出清价（MCP 同构），选中时隐藏 MCP/PAB 结算卡。
+    m_btnEngineMkt = new QPushButton();
+    m_btnEngineMkt->setObjectName("modeCard");
+    m_btnEngineMkt->setCheckable(true);
+    m_btnEngineMkt->setChecked(true);
+    m_btnEngineMkt->setAutoExclusive(true);
+    m_btnEngineMkt->setText(QStringLiteral(
+        "分段报价撮合 · 双侧申报曲线出清\n"
+        "双侧按多段量价申报，逐时段按申报曲线撮合出清；\n"
+        "结算方式下方可选 MCP / PAB 对比。规则最直观，适合首轮验证与教学演示。"));
+
+    m_btnEngineUc = new QPushButton();
+    m_btnEngineUc->setObjectName("modeCard");
+    m_btnEngineUc->setCheckable(true);
+    m_btnEngineUc->setAutoExclusive(true);
+    m_btnEngineUc->setToolTip(QStringLiteral("内含机组约束参数 generator_meta.csv"));
+    m_btnEngineUc->setText(QStringLiteral(
+        "SCUC 机组组合 · HiGHS 求解器定价\n"
+        "求解器决定全天 96 期开停机与出力（pMin、爬坡、启停时间、启动费用为约束）；\n"
+        "出清价 = 经济调度对偶价，结算恒为统一出清价。需数据含 generator_meta.csv。"));
+
+    auto *engineRow = new QHBoxLayout();
+    engineRow->setSpacing(12);
+    engineRow->addWidget(m_btnEngineMkt, 1);
+    engineRow->addWidget(m_btnEngineUc, 1);
 
     // --- 其余参数 ---
     auto *form = new QFormLayout();
@@ -583,28 +628,38 @@ QWidget *MainWindow::buildControlPage()
         QStringLiteral("24 时段（每 1 小时）"),
         QStringLiteral("96 时段（每 15 分钟）"),
     });
-    m_granCombo->setToolTip(QStringLiteral("创新点③：96 时段连续出清，依据规则 4.1 条"));
+    m_granCombo->setCurrentIndex(1); // 默认 96 时段（原生粒度，与引擎口径一致）
+    m_granCombo->setToolTip(QStringLiteral("可选 96 时段 / 24 时段（平均值）"));
     form->addRow(QStringLiteral("时段颗粒度："), m_granCombo);
 
-    form->addRow(QStringLiteral("出清机制："), m_engineCombo);
-    connect(m_engineCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
-        const bool wantUc = (idx == 1);
+    // 出清机制切换：SCUC 依赖 generator_meta.csv，缺失则回弹并提示；
+    //   切换即时重算（与渗透率滑块行为一致）
+    auto applyUcMode = [this](bool wantUc) {
         if (wantUc && m_session.market.generatorMeta.isEmpty()) {
             // 无机组参数表 → 拒绝切换并回弹（SCUC 依赖 generator_meta.csv）
-            QSignalBlocker block(m_engineCombo);
-            m_engineCombo->setCurrentIndex(0);
+            QSignalBlocker blockUc(m_btnEngineUc);
+            QSignalBlocker blockMkt(m_btnEngineMkt);
+            m_btnEngineUc->setChecked(false);
+            m_btnEngineMkt->setChecked(true);
             statusBar()->showMessage(
                 QStringLiteral("当前数据不含 generator_meta.csv（机组启停参数），无法启用 SCUC 求解器；请加载内置样例或含该文件的目录"), 8000);
             return;
         }
         m_session.ucMode = wantUc;
-        // UC 机制下结算恒为统一出清价（MCP 同构），MCP/PAB 结算卡置灰
-        if (m_btnMcp) m_btnMcp->setEnabled(!wantUc);
-        if (m_btnPab) m_btnPab->setEnabled(!wantUc);
+        if (m_mcpRowWrap)
+            m_mcpRowWrap->setVisible(!wantUc); // SCUC 恒为统一出清价，MCP/PAB 无从谈起
         updateFileNamePreviews();
         // 已有结果时切换机制 → 即时按新机制重算（与渗透率滑块行为一致）
         if (m_session.hasResult && m_session.hasData)
             rerunIfReady();
+    };
+    connect(m_btnEngineUc, &QPushButton::toggled, this, [this, applyUcMode](bool on) {
+        if (on)
+            applyUcMode(true);
+    });
+    connect(m_btnEngineMkt, &QPushButton::toggled, this, [this, applyUcMode](bool on) {
+        if (on)
+            applyUcMode(false);
     });
 
     connect(m_btnMcp, &QPushButton::toggled, this, [this] {
@@ -680,27 +735,19 @@ QWidget *MainWindow::buildControlPage()
 
     auto *runBtn = new QPushButton(QStringLiteral("▶  开始仿真"));
     runBtn->setObjectName("runBtn");
-    runBtn->setToolTip(QStringLiteral("数据未就绪时按钮点击会提示先到①导入数据"));
     connect(runBtn, &QPushButton::clicked, this, &MainWindow::onRunSim);
-
-    auto *hint = new QLabel(QStringLiteral(
-        "说明：点击「开始仿真」→ 引擎恒跑 96 时段连续出清（每时段需求 = 购电申报总量，新能源 = 渗透率 × 负荷）→ B 位真实引擎（MCP/PAB）；24 时段为聚合视图。\n"
-        "①页申报表的电价/电量双击即可修改，改后自动重新出清；拖动滑块同样即时重算。\n"
-        "视角切换不重算、不重置数据，只改变各页面的显示口径（工作台语义）。"));
-    hint->setObjectName("hintLabel");
 
     auto *lay = new QVBoxLayout(box);
     lay->addWidget(m_readyLabel);
     lay->addSpacing(8);
-    lay->addLayout(modeRow);
+    lay->addLayout(engineRow);
+    lay->addWidget(m_mcpRowWrap);
     lay->addSpacing(10);
     lay->addLayout(form);
     lay->addSpacing(10);
     lay->addWidget(m_paramSummary);
     lay->addSpacing(14);
     lay->addWidget(runBtn, 0, Qt::AlignLeft);
-    lay->addSpacing(8);
-    lay->addWidget(hint);
 
     auto *outer = new QVBoxLayout(page);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -920,21 +967,21 @@ QWidget *MainWindow::buildChartPage()
         m_axisPriceX->setTitleText(QStringLiteral("时刻 (h)"));
         m_axisPriceX->setTickCount(13);
 
-        auto *axisLeft = new QValueAxis();
-        axisLeft->setRange(0, 600);
-        axisLeft->setTitleText(QStringLiteral("电价 (元/MWh)"));
+        m_axisPriceY = new QValueAxis();
+        m_axisPriceY->setRange(0, 600);
+        m_axisPriceY->setTitleText(QStringLiteral("电价 (元/MWh)"));
 
-        auto *axisRight = new QValueAxis();
-        axisRight->setRange(0, 400);
-        axisRight->setTitleText(QStringLiteral("新能源出力 (MW)"));
+        m_axisRenewY = new QValueAxis();
+        m_axisRenewY->setRange(0, 400);
+        m_axisRenewY->setTitleText(QStringLiteral("新能源出力 (MW)"));
 
         chart->addAxis(m_axisPriceX, Qt::AlignBottom);
-        chart->addAxis(axisLeft, Qt::AlignLeft);
-        chart->addAxis(axisRight, Qt::AlignRight);
+        chart->addAxis(m_axisPriceY, Qt::AlignLeft);
+        chart->addAxis(m_axisRenewY, Qt::AlignRight);
         m_priceSeries->attachAxis(m_axisPriceX);
-        m_priceSeries->attachAxis(axisLeft);
+        m_priceSeries->attachAxis(m_axisPriceY);
         m_renewSeries->attachAxis(m_axisPriceX);
-        m_renewSeries->attachAxis(axisRight);
+        m_renewSeries->attachAxis(m_axisRenewY);
 
         chart->setTitle(QStringLiteral("真实出清：早晚高峰电价抬升 · 午间光伏压价"));
         chart->legend()->setAlignment(Qt::AlignBottom);
@@ -1028,10 +1075,6 @@ QWidget *MainWindow::buildExportPage()
     btnRow->addWidget(curveBtn);
     btnRow->addStretch();
 
-    auto *hint = new QLabel(QStringLiteral(
-        "说明：结算日报按当前视角导出——平台视角为逐时段全局表；发电侧/购电侧视角为逐主体明细表。"));
-    hint->setObjectName("hintLabel");
-
     auto *lay = new QVBoxLayout(content);
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(10);
@@ -1039,7 +1082,6 @@ QWidget *MainWindow::buildExportPage()
     lay->addWidget(fileBox);
     lay->addLayout(btnRow);
     lay->addWidget(logBox);
-    lay->addWidget(hint);
 
     m_exportStack->addWidget(content);
 
@@ -1225,12 +1267,16 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     // S4：UC 机制依赖 generator_meta.csv——新数据缺失时自动退回分段撮合并提示
     if (m_session.ucMode && d.generatorMeta.isEmpty()) {
         m_session.ucMode = false;
-        if (m_engineCombo) {
-            QSignalBlocker block(m_engineCombo);
-            m_engineCombo->setCurrentIndex(0);
+        if (m_btnEngineUc) {
+            QSignalBlocker blockUc(m_btnEngineUc);
+            m_btnEngineUc->setChecked(false);
         }
-        if (m_btnMcp) m_btnMcp->setEnabled(true);
-        if (m_btnPab) m_btnPab->setEnabled(true);
+        if (m_btnEngineMkt) {
+            QSignalBlocker blockMkt(m_btnEngineMkt);
+            m_btnEngineMkt->setChecked(true);
+        }
+        if (m_mcpRowWrap)
+            m_mcpRowWrap->setVisible(true);
         statusBar()->showMessage(
             QStringLiteral("新数据不含 generator_meta.csv，出清机制已退回「分段报价撮合」"), 8000);
     }
@@ -1586,13 +1632,6 @@ void MainWindow::refreshImportPage()
         m_importTabs->setTabText(1, quadForm ? QStringLiteral("购电侧用电量（可调，决定需求）")
                                              : QStringLiteral("购电侧申报"));
     }
-    if (m_genCardName)
-        m_genCardName->setText(quadForm ? QStringLiteral("发电侧成本曲线")
-                                        : QStringLiteral("发电侧申报"));
-    if (m_genCardDesc)
-        m_genCardDesc->setText(quadForm
-                                   ? QStringLiteral("generator_quadratic.csv · C(P)=aP²+bP+c")
-                                   : QStringLiteral("generator_bids.csv"));
     if (m_formHint)
         m_formHint->setText(quadForm
             ? QStringLiteral("选题 2026v2 第 (10) 问扩展：发电侧申报连续成本特性，出清价 λ* 由边际成本曲线与净负荷的交点确定。需求 = Σ购电申报量(t)，本页可直接调各用户用电量（改总量即移动 λ*）；负荷曲线仅作渗透率基准。")
@@ -1628,28 +1667,6 @@ void MainWindow::refreshImportPage()
                                       .arg(sums.genMW, 0, 'f', 1)
                                       .arg(loadTxt)
                                       .arg(scaleTxt));
-        }
-    }
-
-    // 数据集状态卡（发电/购电两表；新能源由 P2 滑块控制）
-    //   V1.3.2：发电侧就绪判定随申报形式切换（二次形式看二次参数表）
-    const bool quadForm2 =
-        m_session.quadraticMode && !m_session.market.quadraticGens.isEmpty();
-    const bool ucForm2 = m_session.ucMode && !m_session.market.generatorMeta.isEmpty();
-    const bool ready[2] = {
-        ucForm2   ? !m_session.market.generatorMeta.isEmpty()
-                  : quadForm2 ? !m_session.market.quadraticGens.isEmpty()
-                              : !m_session.market.generatorBids.isEmpty(),
-        !m_session.market.consumerBids.isEmpty(),
-    };
-    for (int i = 0; i < 2; ++i) {
-        if (m_statusBadges[i]) {
-            m_statusBadges[i]->setText(ready[i] ? QStringLiteral("✓ 已就绪")
-                                                : QStringLiteral("未导入"));
-            m_statusBadges[i]->setObjectName(ready[i] ? QStringLiteral("statusBadgeOk")
-                                                      : QStringLiteral("statusBadgeWait"));
-            m_statusBadges[i]->style()->unpolish(m_statusBadges[i]);
-            m_statusBadges[i]->style()->polish(m_statusBadges[i]);
         }
     }
 
@@ -1716,6 +1733,16 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
     const int srcIdx = item->data(Qt::UserRole).toInt();
 
     // 两种申报结构都有 price/quantity 字段，用泛型 lambda 统一处理
+    // showEditHint：①页「编辑提醒」栏同步反馈（红=违规已恢复，绿=合规已生效）
+    const auto showEditHint = [this](const QString &text, bool bad) {
+        if (!m_editHint)
+            return;
+        m_editHint->setText(text);
+        m_editHint->setObjectName(bad ? QStringLiteral("editHintBad")
+                                      : QStringLiteral("editHintOk"));
+        m_editHint->style()->unpolish(m_editHint);
+        m_editHint->style()->polish(m_editHint);
+    };
     const auto handle = [&](auto &bids) {
         if (srcIdx < 0 || srcIdx >= bids.size())
             return;
@@ -1732,16 +1759,25 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         const double val = item->text().toDouble(&ok);
         if (!ok) {
             revert();
+            showEditHint(QStringLiteral("❗ 输入无效：请填写数字（如 260 或 260.5），已恢复原值"), true);
             statusBar()->showMessage(QStringLiteral("输入无效：请填写数字（如 260 或 260.5）"), 6000);
             return;
         }
         if (isPrice && (val < 0.0 || val > 1500.0)) {
             revert();
+            showEditHint(
+                QStringLiteral("❗ 电价 %1 超出 0~1500 元/MWh（限价规则），已恢复原值")
+                    .arg(val, 0, 'f', 1),
+                true);
             statusBar()->showMessage(QStringLiteral("申报电价需在 0~1500 元/MWh 之间（限价规则）"), 6000);
             return;
         }
         if (isQty && val < 0.0) {
             revert();
+            showEditHint(
+                QStringLiteral("❗ 电量 %1 为负数，已恢复原值（0 = 该时段该段不申报/停机）")
+                    .arg(val, 0, 'f', 1),
+                true);
             statusBar()->showMessage(QStringLiteral("申报电量需为非负数（0 = 该时段该段不申报/停机）"), 6000);
             return;
         }
@@ -1752,6 +1788,8 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
             bid.price = val;
         else
             bid.quantity = val;
+
+        showEditHint(QStringLiteral("✓ 本次编辑合规，已生效并重算校验"), false);
 
         // 编辑后即时重跑跨文件校验与平衡提示（结果只影响提示条，不阻断出清）
         QStringList errs, hints;
@@ -2031,9 +2069,7 @@ void MainWindow::renderCheckBar()
     if (m_checkErrors.isEmpty()) {
         m_checkText->setStyleSheet(QString());
         m_checkText->setText(QStringLiteral(
-            "<b>申报校验：规则全部通过</b>　数据来源：%1<br>"
-            "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 报价单调性 · 0~1500 限价 · 跨文件一致性），"
-            "依据《电力现货市场基本规则（试行）》4.2.3 条；新能源不参与申报，出力由仿真控制页渗透率 × 负荷曲线自动生成</span>")
+            "<b>申报校验：规则全部通过</b>　数据来源：%1")
                 .arg(m_session.dataSource));
     } else {
         m_checkText->setStyleSheet(QStringLiteral("color:#B3261E;"));
@@ -2238,13 +2274,29 @@ void MainWindow::refreshChartPage()
     if (m_priceSeries && m_renewSeries) {
         m_priceSeries->clear();
         m_renewSeries->clear();
+        double maxPrice = 0.0;
+        double maxRenew = 0.0;
         const double hourPerPeriod = 24.0 / std::max(1, T);
         for (int i = 0; i < T; ++i) {
             m_priceSeries->append((i + 1) * hourPerPeriod, periods[i].clearingPrice);
             m_renewSeries->append((i + 1) * hourPerPeriod, periods[i].renewMW);
+            maxPrice = std::max(maxPrice, periods[i].clearingPrice);
+            maxRenew = std::max(maxRenew, periods[i].renewMW);
         }
         if (m_axisPriceX)
             m_axisPriceX->setRange(0, 24);
+        // 纵轴随数据自适应（×1.15 余量，向上取整到百）：
+        //   稀缺价 1500 时左轴自动到 1800，曲线不再被固定量程裁切
+        if (m_axisPriceY) {
+            const double yL = std::ceil(std::max(100.0, maxPrice * 1.15) / 100.0) * 100.0;
+            m_axisPriceY->setRange(0.0, yL);
+            m_axisPriceY->setTickCount(5);
+        }
+        if (m_axisRenewY) {
+            const double yR = std::ceil(std::max(100.0, maxRenew * 1.15) / 100.0) * 100.0;
+            m_axisRenewY->setRange(0.0, yR);
+            m_axisRenewY->setTickCount(5);
+        }
     }
 
     // 供需交叉图（真实申报阶梯 + 出清价水平线）
@@ -2900,6 +2952,42 @@ void MainWindow::applyStyle()
             color: #0C447C;
             border: 2px solid #185FA5;
             font-weight: bold;
+        }
+
+        /* 结算方式卡（MCP/PAB）：浅底无描边 + 选中左侧蓝竖条，与上排机制卡区分 */
+        #modeCardSub {
+            background: #F4F8FC;
+            color: #3A3A42;
+            border: 4px solid transparent;
+            border-radius: 10px;
+            padding: 12px 16px;
+            font-size: 14px;
+            text-align: left;
+        }
+        #modeCardSub:hover { background: #EBF3FA; }
+        #modeCardSub:checked {
+            background: #E6F1FB;
+            color: #0C447C;
+            border-left-color: #185FA5;
+            font-weight: bold;
+        }
+
+        /* ①页 校验规则 | 编辑提醒 双栏卡 */
+        #ruleCard {
+            background: #F7F8FA;
+            border-radius: 10px;
+        }
+        #ruleCardTitle { color: #444441; font-size: 13px; font-weight: bold; }
+        #ruleCardText  { color: #6A6A72; font-size: 12px; }
+        #editHintIdle  { color: #8A8A93; font-size: 12px; }
+        #editHintOk    { color: #2F7D4F; font-size: 12px; font-weight: bold; }
+        #editHintBad   { color: #B3261E; font-size: 12px; font-weight: bold; }
+
+        /* 导航下方随页说明 */
+        #navHint {
+            color: #8A8A93;
+            font-size: 12px;
+            padding: 0 6px;
         }
 
         /* 数据集状态卡（P1） */
