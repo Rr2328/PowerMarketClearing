@@ -5,7 +5,6 @@
 #include <QVector>
 
 #include "data/data_reader.h"
-#include "data/scenario_manager.h"
 
 // ------------------------------------------------------------------
 // 出清结果数据结构（界面消费的唯一接口，也是与 B 位引擎的对齐边界）

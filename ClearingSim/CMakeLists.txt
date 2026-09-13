@@ -22,7 +22,6 @@ qt_add_executable(ClearingSim
     main.cpp
     mainwindow.cpp
     mainwindow.h
-    mainwindow.ui
 
     data/data_reader.h
     data/data_reader.cpp
