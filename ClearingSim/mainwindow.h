@@ -69,7 +69,6 @@ private:
     bool loadDataFiles(const QString &genFile, const QString &conFile,
                        const QString &sourceName,
                        const QString &loadFile = QString(),      // 可选：负荷曲线（渗透率基准）
-                       const QString &renewFile = QString(),     // 可选：新能源形状曲线
                        bool quadratic = false);                  // 申报形式：二次成本曲线（V1.3.2）
     bool reloadCurrentSource();                      // 按记忆的数据源 + 当前申报形式重载
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
@@ -143,7 +142,7 @@ private:
     QLabel         *m_bidFormLabel = nullptr;   // P2 申报形式只读标识（在 P1 切换）
     // 申报形式切换时的重载数据源记忆
     QString         m_lastGenFile, m_lastConFile, m_lastSourceName;
-    QString         m_lastLoadFile, m_lastRenewFile;
+    QString         m_lastLoadFile;
     bool            m_hasLastSource = false;
     // #89：P1 单时段编辑视图
     QComboBox      *m_periodCombo  = nullptr;   // 交易时段下拉（96 期原生粒度）
@@ -176,6 +175,7 @@ private:
     // #82：申报表编辑支持
     bool m_loadingBids = false;      // 刷新表格时屏蔽 itemChanged（防递归）
     QStringList m_checkErrors;       // 最近一次跨文件校验结果（编辑后即时更新）
+    QStringList m_checkHints;        // 平衡偏差提示（契约 §3.2：只提示不阻断，琥珀色展示）
 };
 
 #endif // MAINWINDOW_H

@@ -47,24 +47,12 @@ struct LoadPoint
     double load = 0.0;
 };
 
-// 新能源出力数据
-struct RenewableOutput
-{
-    QString generatorId;
-    QString generatorType;
-
-    int period = 0;
-
-    double output = 0.0;
-};
-
 // 数据文件路径
 struct DataFileSet
 {
     QString generatorBidsFile;
     QString consumerBidsFile;
     QString loadCurveFile;
-    QString renewableOutputFile;
 };
 
 // 统一市场输入数据
@@ -73,7 +61,6 @@ struct MarketData
     QVector<GeneratorBid> generatorBids;
     QVector<ConsumerBid> consumerBids;
     QVector<LoadPoint> loadCurve;
-    QVector<RenewableOutput> renewableOutputs;
 
     // 二次成本机组参数（可选：generator_quadratic.csv 提供时启用二次模式，
     // 选题 2026v2 (10) 问；行 = 机组，全天一条曲线，非逐时段申报）
@@ -88,7 +75,6 @@ struct MarketData
         generatorBids.clear();
         consumerBids.clear();
         loadCurve.clear();
-        renewableOutputs.clear();
         quadraticGens.clear();
         generatorMeta.clear();
     }
@@ -118,11 +104,6 @@ public:
         QVector<LoadPoint> &data,
         QStringList &errors);
 
-    static bool readRenewableOutput(
-        const QString &filePath,
-        QVector<RenewableOutput> &data,
-        QStringList &errors);
-
     // 二次成本机组参数表（可选文件 generator_quadratic.csv）：
     //   表头 name,id,a,b,c,pMax；行 = 机组（全天一条曲线）。
     //   文件不存在时返回 false 且不记错误（二次模式仅是未启用）。
@@ -145,9 +126,15 @@ public:
         MarketData &data,
         QStringList &errors);
 
+    // 跨文件一致性校验 + 供需平衡提示（契约 §3.2-3，D5 职责②）：
+    //   返回值 = 是否存在阻断性错误（V1.3 起平衡偏差不阻断，正常恒为 true）；
+    //   errors = 阻断性错误（读取失败、规则违规等）；
+    //   hints = 平衡偏差提示（逐时段 Σ用户申报(t) vs 负荷(t) + 总量口径），
+    //           只提示讲解用，不强制相等（允许老师刻意做供需失衡场景）。
     static bool validateRelations(
         const MarketData &data,
-        QStringList &errors);
+        QStringList &errors,
+        QStringList &hints);
 };
 
 #endif // DATA_READER_H

@@ -13,7 +13,6 @@ struct AppSession
 {
     MarketData market;                 // A 读入的申报/曲线数据（可能已被「按负荷预填」缩放）
     MarketData marketBaseline;         // 加载时的原始快照（预填重置基准，幂等）
-    QVector<PeriodScenario> scenarios; // A 构建的逐时段场景
     ClearingResult result;             // 出清结果（ClearingFacade 外观 → 真引擎）
 
     bool hasData = false;              // 申报数据是否已导入（驱动 P2 就绪灯）
@@ -36,7 +35,6 @@ struct AppSession
 
     void resetResult()
     {
-        scenarios.clear();
         result = ClearingResult();
         hasResult = false;
     }

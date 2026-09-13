@@ -45,8 +45,8 @@ double loadAt(const MarketData &market, int period)
 // ------------------------------------------------------------------
 // 渗透率换算（契约 §5.3，B 与 C 用同一式）：
 //   P_re(t) = 渗透率 × 负荷(t)；无负荷曲线时回退 购电申报总量(t)。
-//   注：形状曲线只决定各新能源机组之间的分配，进入撮合的 0 价 RENEW
-//   供给段总量恒为 P_re(t)，故此处无需逐机组拆分。
+//   V1.3.5：renewable_output.csv 已移除——新能源不区分机组，进入撮合的
+//   0 价 RENEW 供给段总量恒为 P_re(t)（RENEW 为聚合主体，不再逐机组拆分）。
 // ------------------------------------------------------------------
 double ClearingFacade::renewCapacityAt(const MarketData &market, int period,
                                        double penetration)
@@ -573,13 +573,13 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
     }
     result.totalCost = s.totalCost;
 
-    // 稀缺提示：需求超出可开机容量的时段由失负荷松弛放行、λ 封顶 540
+    // 稀缺提示：需求超出可开机容量的时段由失负荷松弛放行、λ 封顶 1500
     // （V1.3.1 同口径）；最大缺口写进数据源描述，P2/P3 可见
     double maxShed = 0.0;
     for (double v : s.shed)
         maxShed = std::max(maxShed, v);
     if (maxShed > 0.5)
-        result.sourceName += QStringLiteral(" · 峰时段缺供 %1 MW（稀缺出清价 540）")
+        result.sourceName += QStringLiteral(" · 峰时段缺供 %1 MW（稀缺出清价 1500）")
                                  .arg(maxShed, 0, 'f', 1);
 
     // 24 期聚合（口径与 clearPeriods / clearPeriodsQuadratic 完全一致）

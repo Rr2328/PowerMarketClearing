@@ -149,7 +149,7 @@ QSet<int> periodsForEntity(
 
 // ============================================================
 // 场景 1：V1.3 长表 scenario 端到端出清
-//   CSV → DataReader → ScenarioManager → ClearingFacade 96 期 → 全天均价 ≈ 229.7
+//   CSV → DataReader → ScenarioManager → ClearingFacade 96 期 → 全天均价 ≈ 367.3
 // ============================================================
 
 void testScenarioLongTableEndToEnd(const QString &repoRoot)
@@ -157,14 +157,13 @@ void testScenarioLongTableEndToEnd(const QString &repoRoot)
     qInfo().noquote()
         << "---------- 场景 1：V1.3 长表 scenario 端到端 ----------";
 
-    // ---- 1) DataReader：读取 V1.3 长表 + 负荷 + 新能源 ----
+    // ---- 1) DataReader：读取 V1.3 长表 + 负荷 ----
     QStringList errors;
     MarketData market;
     DataFileSet files;
     files.generatorBidsFile = repoRoot + "/data/samples/scenario_balanced/generator_bids.csv";
     files.consumerBidsFile = repoRoot + "/data/samples/scenario_balanced/consumer_bids.csv";
     files.loadCurveFile = repoRoot + "/data/samples/curves/load_curve.csv";
-    files.renewableOutputFile = repoRoot + "/data/samples/curves/renewable_output.csv";
     const bool okRead = DataReader::readAll(files, market, errors);
     check(okRead, "scenario 长表读取成功");
     check(errors.isEmpty(),
@@ -232,7 +231,7 @@ void testScenarioLongTableEndToEnd(const QString &repoRoot)
     check(market.loadCurve.size() == 96,
           QStringLiteral("scenario 负荷曲线 96 点（实际=%1）").arg(market.loadCurve.size()));
 
-    // ---- 8) ClearingFacade 端到端：96 期恒跑 + 全天均价 ≈ 229.7（V1.3 对拍锚点）----
+    // ---- 8) ClearingFacade 端到端：96 期恒跑 + 全天均价 ≈ 367.3（V1.3 对拍锚点）----
     const auto dayResult = ClearingFacade::clearPeriods(
         market, 96, 0.20, QStringLiteral("MCP"));
     check(dayResult.periods.size() == 96,
@@ -254,8 +253,8 @@ void testScenarioLongTableEndToEnd(const QString &repoRoot)
             ++fullClearCount;
     }
     const double avg = priceSum / dayResult.periods.size();
-    checkClose(avg, 229.7, 0.5,
-               "ClearingFacade 全天均价 ≈ 229.7（V1.3 长表对拍锚点）");
+    checkClose(avg, 367.3, 0.5,
+               "ClearingFacade 全天均价 ≈ 367.3（V1.3 长表对拍锚点，2026-09 方案 A 校准）");
     check(clearedCount == 96,
           QStringLiteral("96 期全部时段均有成交（实际=%1）").arg(clearedCount));
     check(fullClearCount == 96,
@@ -263,7 +262,7 @@ void testScenarioLongTableEndToEnd(const QString &repoRoot)
               .arg(fullClearCount)
               .arg(maxGap, 0, 'f', 3));
 
-    // ---- 9) 出清价落在五级阶梯内（210/220/230/240/260）----
+    // ---- 9) 出清价落在五级阶梯内（330/350/370/390/410）----
     QSet<double> priceSet;
     for (const auto &pr : dayResult.periods)
         priceSet.insert(pr.clearingPrice);
@@ -283,7 +282,7 @@ void testBenchmarkNarrowTableEndToEnd(const QString &repoRoot)
 
     QStringList errors;
     MarketData market;
-    // 窄表 benchmark 只有两张申报表，无负荷曲线/新能源曲线——
+    // 窄表 benchmark 只有两张申报表，无负荷曲线——
     // 逐张调 readGeneratorBids / readConsumerBids 避开 readAll 的全文件检查。
     const QString baseDir = repoRoot + "/data/samples/benchmark";
     const bool okGen = DataReader::readGeneratorBids(
@@ -357,7 +356,6 @@ void testAggregation24(const QString &repoRoot)
     files.generatorBidsFile = repoRoot + "/data/samples/scenario_balanced/generator_bids.csv";
     files.consumerBidsFile = repoRoot + "/data/samples/scenario_balanced/consumer_bids.csv";
     files.loadCurveFile = repoRoot + "/data/samples/curves/load_curve.csv";
-    files.renewableOutputFile = repoRoot + "/data/samples/curves/renewable_output.csv";
     DataReader::readAll(files, market, errors);
 
     const auto day96 = ClearingFacade::clearPeriods(market, 96, 0.20, QStringLiteral("MCP"));

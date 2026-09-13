@@ -24,8 +24,8 @@
 
 ## 三、技术栈
 
-- **语言**：C++11 及以上
-- **界面框架**：Qt 5 / Qt Widgets
+- **语言**：C++17 及以上
+- **界面框架**：Qt 6.5 / Qt Widgets
 - **图表库**：QChart
 - **数据格式**：CSV 文件读写
 - **开发环境**：Qt Creator / Visual Studio + Qt
@@ -80,7 +80,7 @@
 
 ## 八、如何运行
 
-1. 安装 Qt 5.x 及 Qt Creator；
+1. 安装 Qt 6.5 及 Qt Creator；
 2. 克隆仓库：`git clone <仓库地址>`；
 3. 使用 Qt Creator 打开项目文件（`.pro` 或 `CMakeLists.txt`）；
 4. 编译运行，导入 `data/` 目录下的测试 CSV 数据即可体验出清仿真。

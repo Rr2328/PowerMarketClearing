@@ -120,9 +120,9 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
     }
 
     const double kInf = std::numeric_limits<double>::infinity();
-    // 失负荷价值（元/MWh）= 平台限价 540：需求超出可开机容量时，
-    // 松弛变量 r[t] 放行缺口、λ 封顶 540——与 V1.3.1 稀缺定价同口径，模型恒有解
-    const double kShedCost = 540.0;
+    // 失负荷价值（元/MWh）= 平台限价 1500：需求超出可开机容量时，
+    // 松弛变量 r[t] 放行缺口、λ 封顶 1500——与 V1.3.1 稀缺定价同口径，模型恒有解
+    const double kShedCost = 1500.0;
     const int OFF_U = G * T, OFF_SU = 2 * G * T, OFF_SD = 3 * G * T, OFF_R = 4 * G * T;
 
     Highs h;
@@ -148,7 +148,7 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
     for (int t = 0; t < T; ++t)
         h.addVar(0.0, kInf);                                           // r[t] 失负荷松弛
     for (int t = 0; t < T; ++t)
-        h.changeColCost(OFF_R + t, kShedCost);                         // 失负荷惩罚 = 限价 540
+        h.changeColCost(OFF_R + t, kShedCost);                         // 失负荷惩罚 = 限价 1500
 
     // ---------- 目标函数 ----------
     // min Σ  c_g·p + noLoadCost_g·u + startupCost_g·su
@@ -160,8 +160,8 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
         }
 
     // ---------- 约束① 功率平衡（先加：行号 = t，第二阶段对偶取这里） ----------
-    // Σ_g p[g,t] + r[t] = D(t)：缺口由失负荷松弛 r 补足（成本 540 = 限价），
-    // 需求超容量时 λ 封顶 540（对偶被松弛成本钉住），模型恒有解
+    // Σ_g p[g,t] + r[t] = D(t)：缺口由失负荷松弛 r 补足（成本 1500 = 限价），
+    // 需求超容量时 λ 封顶 1500（对偶被松弛成本钉住），模型恒有解
     for (int t = 0; t < T; ++t) {
         QVector<HighsInt> cols(G + 1);
         QVector<double> coefs(G + 1, 1.0);
@@ -404,7 +404,7 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
                 sol.p[g][t] = ed.col_value[t * G1 + g];
         }
         // λ 定价（统一边际出清口径）：
-        //   失负荷时段 = 失负荷价值 540（V1.3.1 稀缺封顶）；
+        //   失负荷时段 = 失负荷价值 1500（V1.3.1 稀缺封顶）；
         //   有机组出力处于箱型边界内点（lo < p < hi）→ 边际机组 = 内点中最贵的；
         //   全部被调机组都钉在边界（如恰好压 pMin）→ 取被调机组中最便宜的。
         // 不直接取行对偶的原因：机组出力被边界钉住时对偶退化（多个 λ 同为最优，

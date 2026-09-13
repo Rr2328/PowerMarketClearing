@@ -619,7 +619,7 @@ QWidget *MainWindow::buildControlPage()
             const bool gran96 = m_granCombo->currentIndex() == 1;
             const QString today = QDate::currentDate().toString(QStringLiteral("yyyy-MM-dd"));
             m_paramSummary->setText(QStringLiteral(
-                                        "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　限价区间 0 ~ 540 元/MWh")
+                                        "仿真日期 %1　·　时段颗粒度 %2　·　出清时段 %3 点　·　限价区间 0 ~ 1500 元/MWh")
                                         .arg(today,
                                              gran96 ? QStringLiteral("15 分钟") : QStringLiteral("1 小时"),
                                              gran96 ? QStringLiteral("96") : QStringLiteral("24")));
@@ -1134,12 +1134,14 @@ QWidget *MainWindow::buildPerspectiveBar()
 
 // ============================================================
 // 数据导入（A 模块真实读取 + 校验）
-//   V1.3（#88）口径：申报两张长表必选；负荷曲线（渗透率基准）与
-//   新能源形状曲线可选——缺失时渗透率回退按购电申报总量换算。
+//   V1.3（#88）口径：申报两张长表必选；负荷曲线（渗透率基准）可选——
+//   缺失时渗透率回退按购电申报总量换算。
+//   V1.3.5：renewable_output.csv 移除（GUI 链路从未消费形状数据，
+//   新能源出力恒为 渗透率 × 负荷(t)，见契约 §五）。
 // ============================================================
 bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
                                const QString &sourceName,
-                               const QString &loadFile, const QString &renewFile,
+                               const QString &loadFile,
                                bool quadratic)
 {
     MarketData d;
@@ -1166,11 +1168,9 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     if (!conFile.isEmpty())
         ok = DataReader::readConsumerBids(conFile, d.consumerBids, errs) && ok;
 
-    // 可选曲线（存在才读）：负荷 = 渗透率换算基准，新能源 = 形状曲线
+    // 可选曲线（存在才读）：负荷 = 渗透率换算基准
     if (!loadFile.isEmpty() && QFile::exists(loadFile))
         ok = DataReader::readLoadCurve(loadFile, d.loadCurve, errs) && ok;
-    if (!renewFile.isEmpty() && QFile::exists(renewFile))
-        ok = DataReader::readRenewableOutput(renewFile, d.renewableOutputs, errs) && ok;
 
     // 可选：二次成本机组参数（同目录 generator_quadratic.csv，存在才读；
     // 二次形式下已在上面的存在性检查确认——选题 2026v2 (10) 问）
@@ -1191,7 +1191,9 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
         return false;
     }
 
-    ok = DataReader::validateRelations(d, errs);
+    QStringList hints;
+    ok = DataReader::validateRelations(d, errs, hints);
+    m_checkHints = hints;               // 平衡偏差提示：琥珀色展示，不阻断
     if (!ok) {
         m_checkErrors = errs;
         renderCheckBar();
@@ -1240,7 +1242,6 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     m_lastConFile = conFile;
     m_lastSourceName = sourceName;
     m_lastLoadFile = loadFile;
-    m_lastRenewFile = renewFile;
     m_hasLastSource = true;
 
     refreshImportPage();
@@ -1255,7 +1256,7 @@ bool MainWindow::reloadCurrentSource()
     if (!m_hasLastSource)
         return false;
     return loadDataFiles(m_lastGenFile, m_lastConFile, m_lastSourceName,
-                         m_lastLoadFile, m_lastRenewFile,
+                         m_lastLoadFile,
                          m_formQuad && m_formQuad->isChecked());
 }
 
@@ -1324,7 +1325,6 @@ void MainWindow::onLoadSamples()
                   dir + QStringLiteral("/scenario/consumer_bids.csv"),
                   QStringLiteral("内置场景"),
                   dir + QStringLiteral("/curves/load_curve.csv"),
-                  dir + QStringLiteral("/curves/renewable_output.csv"),
                   m_formQuad && m_formQuad->isChecked());
 }
 
@@ -1362,10 +1362,8 @@ void MainWindow::onImportCsv()
     // 曲线与二次参数文件未选时，在申报文件同目录自动识别（可选，缺省回退购电申报总量）
     const QDir bidDir = QFileInfo(gen.isEmpty() ? (quad.isEmpty() ? con : quad) : gen).absoluteDir();
     const QString loadCurve = bidDir.filePath(QStringLiteral("load_curve.csv"));
-    const QString renewCurve = bidDir.filePath(QStringLiteral("renewable_output.csv"));
     loadDataFiles(gen, con, QStringLiteral("自定义 CSV 导入"),
                   QFile::exists(loadCurve) ? loadCurve : QString(),
-                  QFile::exists(renewCurve) ? renewCurve : QString(),
                   quadForm);
 }
 
@@ -1378,6 +1376,7 @@ void MainWindow::onClearData()
     m_session.hasData = false;
     m_session.resetResult();
     m_checkErrors.clear();
+    m_checkHints.clear();
     setHasResult(false);
     refreshImportPage();
     updateFileNamePreviews();
@@ -1736,9 +1735,9 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
             statusBar()->showMessage(QStringLiteral("输入无效：请填写数字（如 260 或 260.5）"), 6000);
             return;
         }
-        if (isPrice && (val < 0.0 || val > 540.0)) {
+        if (isPrice && (val < 0.0 || val > 1500.0)) {
             revert();
-            statusBar()->showMessage(QStringLiteral("申报电价需在 0~540 元/MWh 之间（限价规则）"), 6000);
+            statusBar()->showMessage(QStringLiteral("申报电价需在 0~1500 元/MWh 之间（限价规则）"), 6000);
             return;
         }
         if (isQty && val < 0.0) {
@@ -1754,10 +1753,11 @@ void MainWindow::onBidItemChanged(QTableWidgetItem *item)
         else
             bid.quantity = val;
 
-        // 编辑后即时重跑跨文件校验（结果只影响提示条，不阻断出清）
-        QStringList errs;
-        DataReader::validateRelations(m_session.market, errs);
+        // 编辑后即时重跑跨文件校验与平衡提示（结果只影响提示条，不阻断出清）
+        QStringList errs, hints;
+        DataReader::validateRelations(m_session.market, errs, hints);
         m_checkErrors = errs;
+        m_checkHints = hints;
         renderCheckBar();
 
         // 已有出清结果 → 立即重算并刷新各页
@@ -1830,8 +1830,8 @@ void MainWindow::onQuadParamChanged(QTableWidgetItem *item)
         g.a = val;
         break;
     case 1:
-        if (val < 0.0 || val > 540.0)
-            return fail(QStringLiteral("b 需在 0~540 元/MWh 之间（限价规则）"));
+        if (val < 0.0 || val > 1500.0)
+            return fail(QStringLiteral("b 需在 0~1500 元/MWh 之间（限价规则）"));
         g.b = val;
         break;
     case 2:
@@ -2032,7 +2032,7 @@ void MainWindow::renderCheckBar()
         m_checkText->setStyleSheet(QString());
         m_checkText->setText(QStringLiteral(
             "<b>申报校验：规则全部通过</b>　数据来源：%1<br>"
-            "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 报价单调性 · 0~540 限价 · 跨文件一致性），"
+            "<span style='color:#6A8F75;'>真实校验由 A 模块执行（段数≤5 · 报价单调性 · 0~1500 限价 · 跨文件一致性），"
             "依据《电力现货市场基本规则（试行）》4.2.3 条；新能源不参与申报，出力由仿真控制页渗透率 × 负荷曲线自动生成</span>")
                 .arg(m_session.dataSource));
     } else {
@@ -2383,9 +2383,9 @@ void MainWindow::refreshChartPage()
             m_demandSeries->append(cumC, s.price);
         }
         // V1.3.1 契约封口（§7.3-2，老师评审反馈）：需求量尽 → 垂直降到 0；
-        //   供给量尽 → 垂直升到限价 540（稀缺价语义）。保证任意供需形态下
+        //   供给量尽 → 垂直升到限价 1500（稀缺价语义）。保证任意供需形态下
         //   两线必有几何交点：供大于求时需求封口线穿过供给水平段，反之亦然。
-        constexpr double kPriceCap = 540.0; // 总则规则④：双侧统一限价 0–540
+        constexpr double kPriceCap = 1500.0; // 总则规则④：双侧统一限价 0–1500
         if (!con.isEmpty())
             m_demandSeries->append(cumC, 0.0);
         if (!gen.isEmpty())

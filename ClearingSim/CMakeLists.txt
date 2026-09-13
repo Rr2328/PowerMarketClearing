@@ -22,10 +22,13 @@ qt_add_executable(ClearingSim
     main.cpp
     mainwindow.cpp
     mainwindow.h
-    mainwindow.ui
 
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/csv_utils.h
     data/csv_utils.cpp
     data/data_validator.h
@@ -85,6 +88,10 @@ install(SCRIPT ${deploy_script})
 qt_add_executable(DataReaderTest
     data/data_reader_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -105,6 +112,10 @@ qt_add_executable(ScenarioManagerTest
     data/scenario_manager.cpp
     data/scenario_manager.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -123,6 +134,10 @@ endif()
 qt_add_executable(MarketDataIntegrationTest
     data/market_data_integration_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/csv_utils.cpp
     data/csv_utils.h
@@ -149,6 +164,10 @@ qt_add_executable(ClearingFacadeTest
     engine/clearing_engine.cpp
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     quadratic_clearing.h
     quadratic_clearing.cpp
     uc/uc_solver.h
@@ -168,12 +187,14 @@ target_include_directories(ClearingFacadeTest
 
 
 # V1.3 数据流水线端到端集成测试（CSV → DataReader → ScenarioManager → ClearingFacade）
-# 借鉴 origin/feature/data-model 的端到端集成测试思路（陈美伊 2137534），
-# 但适配到 V1.3 长表结构（bid 不带 period 字段、按 name+id 复合主体标识）
 
 qt_add_executable(DataPipelineIntegrationTest
     data/data_pipeline_integration_test.cpp
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     data/data_reader.h
     data/scenario_manager.cpp
     data/scenario_manager.h
@@ -232,6 +253,10 @@ qt_add_executable(QuadraticClearingTest
     quadratic_clearing.cpp
     data/data_reader.h
     data/data_reader.cpp
+    data/csv_utils.cpp
+    data/csv_utils.h
+    data/data_validator.cpp
+    data/data_validator.h
     core/clearing_facade.h
     core/clearing_facade.cpp
     engine/clearing_engine.h
