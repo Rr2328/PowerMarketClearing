@@ -94,13 +94,16 @@ private:
     // 控件指针
     QStackedWidget *m_rootStack   = nullptr;   // 顶层页面栈：0=封面 1=主界面
     QListWidget    *m_nav          = nullptr;
+    QLabel         *m_navHint      = nullptr;   // 导航下方随页说明（切页即换）
     QStackedWidget *m_stack        = nullptr;
     QStackedWidget *m_resultStack  = nullptr;   // 0=空态卡片 1=内容
     QStackedWidget *m_chartStack   = nullptr;
     QStackedWidget *m_exportStack  = nullptr;
     QPushButton    *m_btnMcp       = nullptr;   // MCP 模式卡（checkable，与 PAB 互斥）
     QPushButton    *m_btnPab       = nullptr;
-    QComboBox      *m_engineCombo  = nullptr;   // 出清机制下拉：分段撮合 / SCUC 机组组合（S4）
+    QPushButton    *m_btnEngineMkt = nullptr;   // 出清机制卡：分段报价撮合（checkable，与 SCUC 互斥）
+    QPushButton    *m_btnEngineUc  = nullptr;   // 出清机制卡：SCUC 机组组合
+    QWidget        *m_mcpRowWrap   = nullptr;   // MCP/PAB 结算卡容器（SCUC 机制下整行隐藏）
     QComboBox      *m_granCombo    = nullptr;
     QLabel         *m_pageTitle    = nullptr;
     QLabel         *m_pageSub      = nullptr;
@@ -120,6 +123,8 @@ private:
     QValueAxis     *m_axisSupplyX  = nullptr;   // 供需图 X（累计电量）
     QValueAxis     *m_axisSupplyY  = nullptr;   // 供需图 Y（报价）
     QValueAxis     *m_axisPriceX   = nullptr;   // 分时电价 X（时段）
+    QValueAxis     *m_axisPriceY   = nullptr;   // 分时电价 Y（电价，随结果自适应）
+    QValueAxis     *m_axisRenewY   = nullptr;   // 新能源出力 Y（随结果自适应）
 
     // 三视角切换条
     QButtonGroup   *m_perspGroup   = nullptr;
@@ -131,14 +136,12 @@ private:
     QTabWidget     *m_importTabs   = nullptr;
     QTableWidget   *m_genTable     = nullptr;
     QTableWidget   *m_conTable     = nullptr;
-    QLabel         *m_statusBadges[2] = {nullptr, nullptr};
+    QLabel         *m_editHint     = nullptr;   // ①页「编辑提醒」栏（越界红字/合规绿字）
     QLabel         *m_checkText    = nullptr;
     // V1.3.2：申报形式选择（数据属性，在导入页确定；互斥单选）
     QRadioButton   *m_formStep     = nullptr;   // 多段量价申报（现行口径）
     QRadioButton   *m_formQuad     = nullptr;   // 二次成本曲线申报（选题第10问扩展）
     QLabel         *m_formHint     = nullptr;   // 形式说明（随单选联动）
-    QLabel         *m_genCardName  = nullptr;   // 发电侧状态卡名称（随形式联动）
-    QLabel         *m_genCardDesc  = nullptr;   // 发电侧状态卡文件说明（随形式联动）
     QLabel         *m_bidFormLabel = nullptr;   // P2 申报形式只读标识（在 P1 切换）
     // 申报形式切换时的重载数据源记忆
     QString         m_lastGenFile, m_lastConFile, m_lastSourceName;
