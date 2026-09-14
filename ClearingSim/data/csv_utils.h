@@ -7,8 +7,7 @@
 
 // 保存一行 CSV 数据及其行号
 struct CsvRow
-{
-    int lineNumber = 0;
+{int lineNumber = 0;
     QStringList columns;
 };
 
