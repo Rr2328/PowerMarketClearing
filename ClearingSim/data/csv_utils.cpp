@@ -3,6 +3,12 @@
 #include <QFile>
 #include <QTextStream>
 
+<<<<<<< HEAD
+=======
+namespace teammate
+{
+
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
 // 拆分 CSV 行并清理字段
 QStringList splitCsvLine(const QString &line)
 {QStringList columns =line.split(',',Qt::KeepEmptyParts);//保留空字符
@@ -36,49 +42,36 @@ bool readCsvRows(const QString &filePath,QStringList &header,QVector<CsvRow> &ro
 {header.clear();
     rows.clear();
     QFile file(filePath);
-
     if (!file.exists())
     {errors.append("文件不存在：" +filePath);
         return false;
     }
-
     if (!file.open(QIODevice::ReadOnly |QIODevice::Text))//只读/按文本处理
     {errors.append("文件无法打开：" +filePath);
         return false;
     }
-
     QTextStream in(&file);//文本读取器，从file读取
-
     if (in.atEnd())
     {errors.append("CSV 文件为空：" +filePath);
         return false;
     }
-
     header =splitCsvLine(in.readLine());
-
     if (header.isEmpty())
     {errors.append("CSV 表头为空：" +filePath);
         return false;
     }
-
     const bool hasIndex =isIndexHeader(header.first());//取表头
-
     if (hasIndex)
     {header.removeFirst();
     }
-
     int lineNumber =1;
-
     while (!in.atEnd())
     {++lineNumber;
         const QString line =in.readLine().trimmed();
-
         if (line.isEmpty())
         {continue;
         }
-
         QStringList columns =splitCsvLine(line);
-
         if (hasIndex)
         {if (columns.isEmpty())
             {errors.append(QString("第 %1 行缺少 index").arg(lineNumber));
@@ -86,25 +79,21 @@ bool readCsvRows(const QString &filePath,QStringList &header,QVector<CsvRow> &ro
             }
             columns.removeFirst();//删除首项
         }
-
         if (columns.size() !=header.size())
         {errors.append(QString("第 %1 行列数错误：应为 %2 列，实际为 %3 列").arg(lineNumber).arg(header.size()).arg(columns.size()));
             continue;
         }
-
         CsvRow row;
         row.lineNumber =lineNumber;
         row.columns =columns;
         rows.push_back(row);
     }
-
     if (rows.isEmpty())
     {if (errors.isEmpty())
         {errors.append("CSV 文件中没有有效数据：" +filePath);
         }
         return false;
     }
-
     return errors.isEmpty();
 }
 
@@ -113,4 +102,10 @@ void appendErrors(const QString &fileName,const QStringList &sourceErrors,QStrin
 {for (const QString &error : sourceErrors)
     {targetErrors.append("[" +fileName +"] " +error);
     }
+<<<<<<< HEAD
 }
+=======
+}
+
+} // namespace teammate
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)

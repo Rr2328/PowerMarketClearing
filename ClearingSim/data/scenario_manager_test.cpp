@@ -11,6 +11,7 @@ namespace
 {
 // 失败用例计数
 int failedTests = 0;
+<<<<<<< HEAD
 // 断言并打印结果，失败时累加失败数
 void check(bool condition,const QString &testName)
 {if (condition)
@@ -18,28 +19,45 @@ void check(bool condition,const QString &testName)
     }
     else
     {qCritical().noquote()<< "[FAIL]"<< testName;
+=======
+
+// 测试结果输出
+void check(bool condition,const QString &testName)
+{if (condition)
+    {qInfo().noquote()<< "[PASS]" << testName;
+    }
+    else
+    {qCritical().noquote()<< "[FAIL]" << testName;
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
         ++failedTests;
     }
 }
 
+<<<<<<< HEAD
 // 自指定路径上溯查找仓库根目录
 QString searchRepoRoot(const QString &startPath)
 {QDir dir(startPath);
     while (true)
     {if (dir.exists("ClearingSim") &&dir.exists("data/samples/scenario"))
+=======
+// 查找项目根目录
+QString searchRepoRoot(const QString &startPath)
+{QDir dir(startPath);
+    while (true)
+    {if (dir.exists("ClearingSim") && dir.exists("data/samples"))
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
         {return dir.absolutePath();
         }
-
         if (!dir.cdUp())
         {break;
         }
     }
-
     return QString();
 }
 
 // 依次从程序目录、工作目录、源码目录尝试定位仓库根目录
 QString findRepoRoot()
+<<<<<<< HEAD
 {QString root =searchRepoRoot(QCoreApplication::applicationDirPath());
     if (!root.isEmpty())
     {return root;
@@ -50,10 +68,21 @@ QString findRepoRoot()
     {return root;
     }
 
+=======
+{QString root = searchRepoRoot(QCoreApplication::applicationDirPath());
+    if (!root.isEmpty())
+    {return root;
+    }
+    root = searchRepoRoot(QDir::currentPath());
+    if (!root.isEmpty())
+    {return root;
+    }
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     const QFileInfo sourceFile(QString::fromUtf8(__FILE__));
     return searchRepoRoot(sourceFile.absolutePath());
 }
 
+<<<<<<< HEAD
 // 按时段数生成一组四文件路径
 DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 {const QString suffix =QString::number(periodCount) +"period";
@@ -69,6 +98,12 @@ DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 void printErrors(const QStringList &errors)
 {for (const QString &error : errors)
     {qInfo().noquote()<< "   "<< error;
+=======
+// 输出错误信息
+void printErrors(const QStringList &errors)
+{for (const QString &error : errors)
+    {qInfo().noquote()<< "   " << error;
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     }
 }
 
@@ -206,6 +241,7 @@ bool containsConsumerBid(const QVector<ConsumerBid> &data,const ConsumerBid &tar
 
 int main(int argc,char *argv[])
 {QCoreApplication app(argc,argv);
+<<<<<<< HEAD
     qInfo().noquote()<< "========== ScenarioManager V1.4 Test ==========";
     // 定位仓库根目录，失败则直接终止
     const QString repoRoot =findRepoRoot();
@@ -228,11 +264,28 @@ int main(int argc,char *argv[])
     QStringList errors;
     bool ok =DataReader::readAll(makeFileSet(scenarioDir,24),data24,errors);
     check(ok,"读取 24 时段基础数据");
+=======
+    qInfo().noquote()<< "========== ScenarioManager Test ==========";
+    const QString repoRoot = findRepoRoot();
+    check(!repoRoot.isEmpty(),"定位项目根目录");
+    if (repoRoot.isEmpty())
+    {return 1;
+    }
+    DataFileSet files;
+    files.generatorBidsFile = repoRoot + "/data/samples/benchmark/generator_bids.csv";
+    files.consumerBidsFile = repoRoot + "/data/samples/benchmark/consumer_bids.csv";
+    files.loadCurveFile = repoRoot + "/data/samples/curves/load_curve.csv";
+    MarketData data;
+    QStringList errors;
+    bool ok = DataReader::readAll(files,data,errors);
+    check(ok,"读取场景基础数据");
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     if (!ok)
     {printErrors(errors);
         return 1;
     }
 
+<<<<<<< HEAD
     // 读取 96 时段数据
     MarketData data96;
     errors.clear();
@@ -248,10 +301,35 @@ int main(int argc,char *argv[])
     errors.clear();
     ok =ScenarioManager::aggregateLoadTo24(data96.loadCurve,load24From96,errors);
     check(ok,"96→24 负荷聚合工具正常");
+=======
+    // 负荷 96→24
+    QVector<LoadPoint> load24;
+    errors.clear();
+    ok = ScenarioManager::aggregateLoadTo24(data.loadCurve,load24,errors);
+    check(ok,"负荷 96→24 聚合");
+    check(load24.size() == 24,"24 时段负荷数量正确");
     if (!ok)
     {printErrors(errors);
     }
 
+    // 检查首小时平均值
+    if (data.loadCurve.size() >= 4 && !load24.isEmpty())
+    {const double expected = (data.loadCurve[0].load + data.loadCurve[1].load + data.loadCurve[2].load + data.loadCurve[3].load) / 4.0;
+        check(std::abs(load24[0].load - expected) < 0.000001,"24 时段负荷采用相邻 4 点平均");
+    }
+
+    // 构建 96 时段场景
+    QVector<PeriodScenario> scenarios96;
+    errors.clear();
+    ok = ScenarioManager::buildPeriodScenarios(data,96,scenarios96,errors);
+    check(ok,"构建 96 时段场景");
+    check(scenarios96.size() == 96,"96 时段场景数量正确");
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
+    if (!ok)
+    {printErrors(errors);
+    }
+
+<<<<<<< HEAD
     check(load24From96.size() == 24,"聚合后负荷数量为 24");
     if (ok &&data96.loadCurve.size() >= 4 &&!load24From96.isEmpty())
     {const double expected =(data96.loadCurve[0].load +data96.loadCurve[1].load +data96.loadCurve[2].load +data96.loadCurve[3].load) / 4.0;
@@ -297,10 +375,19 @@ int main(int argc,char *argv[])
     errors.clear();
     ok =ScenarioManager::buildPeriodScenarios(data24,TimeGranularity::Hourly24,scenarios24,errors);
     check(ok,"直接构建 24 时段场景");
+=======
+    // 构建 24 时段场景
+    QVector<PeriodScenario> scenarios24;
+    errors.clear();
+    ok = ScenarioManager::buildPeriodScenarios(data,24,scenarios24,errors);
+    check(ok,"构建 24 时段场景");
+    check(scenarios24.size() == 24,"24 时段场景数量正确");
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     if (!ok)
     {printErrors(errors);
     }
 
+<<<<<<< HEAD
     check(scenarios24.size() == 24,"24 时段场景数量正确");
     if (ok &&scenarios24.size() == 24)
     {const PeriodScenario &first =scenarios24.first();
@@ -365,11 +452,21 @@ int main(int argc,char *argv[])
     check(!ok &&!errors.isEmpty(),"识别非法时段颗粒度");
     // 构建场景时负荷缺失
     MarketData brokenLoad =data96;
+=======
+    // 非法颗粒度
+    QVector<PeriodScenario> invalidScenarios;
+    errors.clear();
+    ok = ScenarioManager::buildPeriodScenarios(data,48,invalidScenarios,errors);
+    check(!ok,"识别非法时段颗粒度");
+
+    // 缺失负荷时段
+    MarketData brokenLoad = data;
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     if (!brokenLoad.loadCurve.isEmpty())
     {brokenLoad.loadCurve.removeLast();
     }
-
     errors.clear();
+<<<<<<< HEAD
     ok =ScenarioManager::buildPeriodScenarios(brokenLoad,TimeGranularity::QuarterHourly96,invalidScenarios,errors);
     check(!ok &&!errors.isEmpty(),"识别 96 时段负荷缺失");
     // 构建场景时新能源缺失
@@ -466,5 +563,16 @@ int main(int argc,char *argv[])
     }
 
     qCritical().noquote()<< failedTests<< "test(s) failed.";
+=======
+    ok = ScenarioManager::buildPeriodScenarios(brokenLoad,96,invalidScenarios,errors);
+    check(!ok,"识别负荷时段缺失");
+
+    qInfo().noquote()<< "==========================================";
+    if (failedTests == 0)
+    {qInfo().noquote()<< "All ScenarioManager tests passed.";
+        return 0;
+    }
+    qCritical().noquote()<< failedTests << "test(s) failed.";
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     return 1;
 }

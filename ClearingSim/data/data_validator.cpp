@@ -2,6 +2,12 @@
 
 #include <cmath>
 
+<<<<<<< HEAD
+=======
+namespace teammate
+{
+
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
 // 检查字段是否为空
 bool checkNotEmpty(const QString &value,int lineNumber,const QString &fieldName,QStringList &errors)
 {if (value.trimmed().isEmpty())
@@ -51,8 +57,13 @@ bool parseNonNegativeDouble(const QString &text,double &value,int lineNumber,con
 
 // 检查报价范围
 bool checkPriceRange(double price,int lineNumber,const QString &fieldName,QStringList &errors)
+<<<<<<< HEAD
 {if (price <0.0 ||price >540.0)
     {errors.append(QString("第 %1 行 %2 必须在 0～540 元/MWh 范围内").arg(lineNumber).arg(fieldName));
+=======
+{if (price <0.0 ||price >1500.0)
+    {errors.append(QString("第 %1 行 %2 必须在 0～1500 元/MWh 范围内").arg(lineNumber).arg(fieldName));
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
         return false;
     }
     return true;
@@ -116,4 +127,10 @@ bool validateParticipantPeriods(const QHash<QString,QSet<int>> &periodMap,int ex
         }
     }
     return valid;
+<<<<<<< HEAD
 }
+=======
+}
+
+} // namespace teammate
+>>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
