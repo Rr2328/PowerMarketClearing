@@ -35,7 +35,5 @@ struct ClearResult//出清结果
     double totalvolume=0.0;//总成交电量
     QVector<Trade>trade;
 };
-// 注：B 位仅暴露撮合（ClearMarket）。结算由 ClearingFacade 自管（C 接口 EntityCleared），
-//     历史遗留的 settle()/SettlementItem/SettlementMode 已在 #94 清理（全项目无 caller）。
 ClearResult ClearMarket(QVector<Generator>generator,QVector<Consumer>consumer);
 #endif // CLEARING_ENGINE_H
