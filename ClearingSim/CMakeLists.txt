@@ -29,10 +29,6 @@ qt_add_executable(ClearingSim
     data/csv_utils.h
     data/data_validator.cpp
     data/data_validator.h
-    data/csv_utils.h
-    data/csv_utils.cpp
-    data/data_validator.h
-    data/data_validator.cpp
     data/scenario_manager.h
     data/scenario_manager.cpp
 
@@ -46,8 +42,8 @@ qt_add_executable(ClearingSim
     core/market_view.h
     core/market_view.cpp
 
-    quadratic_clearing.h
-    quadratic_clearing.cpp
+    engine/quadratic_clearing.h
+    engine/quadratic_clearing.cpp
 
     uc/uc_solver.h
     uc/uc_solver.cpp
@@ -93,10 +89,6 @@ qt_add_executable(DataReaderTest
     data/data_validator.cpp
     data/data_validator.h
     data/data_reader.h
-    data/csv_utils.cpp
-    data/csv_utils.h
-    data/data_validator.cpp
-    data/data_validator.h
 )
 
 target_link_libraries(DataReaderTest PRIVATE Qt::Core)
@@ -117,10 +109,6 @@ qt_add_executable(ScenarioManagerTest
     data/data_validator.cpp
     data/data_validator.h
     data/data_reader.h
-    data/csv_utils.cpp
-    data/csv_utils.h
-    data/data_validator.cpp
-    data/data_validator.h
 )
 
 target_link_libraries(ScenarioManagerTest PRIVATE Qt::Core)
@@ -139,10 +127,6 @@ qt_add_executable(MarketDataIntegrationTest
     data/data_validator.cpp
     data/data_validator.h
     data/data_reader.h
-    data/csv_utils.cpp
-    data/csv_utils.h
-    data/data_validator.cpp
-    data/data_validator.h
     data/scenario_manager.cpp
     data/scenario_manager.h
 )
@@ -168,8 +152,8 @@ qt_add_executable(ClearingFacadeTest
     data/csv_utils.h
     data/data_validator.cpp
     data/data_validator.h
-    quadratic_clearing.h
-    quadratic_clearing.cpp
+    engine/quadratic_clearing.h
+    engine/quadratic_clearing.cpp
     uc/uc_solver.h
     uc/uc_solver.cpp
 )
@@ -202,8 +186,8 @@ qt_add_executable(DataPipelineIntegrationTest
     core/clearing_facade.h
     engine/clearing_engine.cpp
     engine/clearing_engine.h
-    quadratic_clearing.h
-    quadratic_clearing.cpp
+    engine/quadratic_clearing.h
+    engine/quadratic_clearing.cpp
     uc/uc_solver.h
     uc/uc_solver.cpp
 )
@@ -248,9 +232,9 @@ add_test(NAME MarketDataIntegrationTest COMMAND MarketDataIntegrationTest)
 # 二次曲线出清测试（选题 2026v2 (10) 问）
 
 qt_add_executable(QuadraticClearingTest
-    quadratic_clearing_test.cpp
-    quadratic_clearing.h
-    quadratic_clearing.cpp
+    engine/quadratic_clearing_test.cpp
+    engine/quadratic_clearing.h
+    engine/quadratic_clearing.cpp
     data/data_reader.h
     data/data_reader.cpp
     data/csv_utils.cpp

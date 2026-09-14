@@ -51,7 +51,7 @@
 #include <QtCharts/QValueAxis>
 
 #include "core/clearing_facade.h"
-#include "quadratic_clearing.h"   // P4 二次截面现解（与引擎同一出清算法）
+#include "engine/quadratic_clearing.h"   // P4 二次截面现解（与引擎同一出清算法）
 #include "core/market_view.h"
 #include "data/data_reader.h"
 
