@@ -528,6 +528,9 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
             e.bidPrice = m.marginalCost;   // 电量成本申报口径
             e.clearedMW = s.p[g][t];
             e.money = s.p[g][t] * lam;
+            e.ucOn = s.u[g][t];            // UC 专用：启停状态与技术出力区间
+            e.ucPMin = m.pMin;
+            e.ucPMax = m.pMax;
             out.genDetails.append(e);
         }
 
@@ -572,6 +575,20 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
             result.noLoadCostTotal += market.generatorMeta[g].noLoadCost * s.u[g][t];
     }
     result.totalCost = s.totalCost;
+
+    // UC 机组启停/出力计划穿透（P3 状态列 / P4 甘特图 / P5 启停计划导出）
+    result.ucUnitNames.clear();
+    result.ucUnitStartupCost.clear();
+    result.ucUnitOn.clear();
+    result.ucUnitP.clear();
+    for (int g = 0; g < market.generatorMeta.size(); ++g) {
+        const auto &m = market.generatorMeta[g];
+        result.ucUnitNames.append(
+            QStringLiteral("%1 %2").arg(m.name, m.id));
+        result.ucUnitStartupCost.append(m.startupCost);
+        result.ucUnitOn.append(s.u[g]);
+        result.ucUnitP.append(s.p[g]);
+    }
 
     // 稀缺提示：需求超出可开机容量的时段由失负荷松弛放行、λ 封顶 1500
     // （V1.3.1 同口径）；最大缺口写进数据源描述，P2/P3 可见
