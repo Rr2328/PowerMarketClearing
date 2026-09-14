@@ -21,6 +21,10 @@ struct EntityCleared
     double bidPrice = 0.0;    // 该段申报价（元/MWh）
     double clearedMW = 0.0;   // 中标电量（MWh）
     double money = 0.0;       // 发电侧=收入，购电侧=费用（元）
+    // UC 模式（SCUC）专用：机组启停状态与技术出力区间；其余模式恒为 -1/0
+    int ucOn = -1;            // 启停状态 0/1（-1 = 非 UC 模式）
+    double ucPMin = 0.0;      // 最小技术出力 MW
+    double ucPMax = 0.0;      // 额定容量 MW
 };
 
 // 单时段出清结果
@@ -50,6 +54,13 @@ struct ClearingResult
     double startupCostTotal = 0.0; // 全天启动成本（元）
     double noLoadCostTotal = 0.0;  // 全天空载成本（元）
     double totalCost = 0.0;        // 求解器总成本（电量+空载+启动，元）
+
+    // UC 模式（SCUC）机组启停/出力计划：机组 × 96 期；其余模式为空
+    //   供 P3 明细状态列、P4 启停甘特图、P5 启停计划导出消费
+    QStringList ucUnitNames;                 // 机组显示名（电厂 + 机组号）
+    QVector<double> ucUnitStartupCost;       // 每机组启动费用 元/次
+    QVector<QVector<int>> ucUnitOn;          // [g][t] 启停状态 0/1
+    QVector<QVector<double>> ucUnitP;        // [g][t] 出力计划 MW
 };
 
 // ------------------------------------------------------------------

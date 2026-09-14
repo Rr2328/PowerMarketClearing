@@ -51,7 +51,7 @@
 #include <QtCharts/QValueAxis>
 
 #include "core/clearing_facade.h"
-#include "quadratic_clearing.h"   // P4 二次截面现解（与引擎同一出清算法）
+#include "engine/quadratic_clearing.h"   // P4 二次截面现解（与引擎同一出清算法）
 #include "core/market_view.h"
 #include "data/data_reader.h"
 
@@ -757,6 +757,141 @@ QWidget *MainWindow::buildControlPage()
 }
 
 // ============================================================
+// UcGanttWidget —— UC 机组启停甘特图（纯开停色块，自绘）
+//   行 = 机组（行标签附启动次数/启动成本小计），列 = 全部时段；
+//   深蓝 = 开机，浅灰 = 停机，琥珀竖条 = 启动事件。
+//   仅 UC 模式有数据；其余模式显示引导说明（m_ucHint）。
+// ============================================================
+class UcGanttWidget : public QWidget
+{
+public:
+    explicit UcGanttWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumHeight(220);
+    }
+
+    void setSchedule(const QStringList &names,
+                     const QVector<double> &startupCosts,
+                     const QVector<QVector<int>> &on)
+    {
+        m_names = names;
+        m_startupCosts = startupCosts;
+        m_on = on;
+        update();
+    }
+
+    void clearSchedule()
+    {
+        m_names.clear();
+        m_startupCosts.clear();
+        m_on.clear();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter k(this);
+        const int n = m_names.size();
+        const int T = !m_on.isEmpty() ? m_on.at(0).size() : 0;
+        k.fillRect(rect(), QColor(0xFF, 0xFF, 0xFF));
+
+        if (n == 0 || T == 0) {
+            k.setPen(QColor(0x9A, 0xA4, 0xB8));
+            k.drawText(rect(), Qt::AlignCenter, QStringLiteral("暂无启停计划"));
+            return;
+        }
+
+        const int left = 170, right = 12, top = 30, bottom = 26;
+        const double cellW = double(width() - left - right) / T;
+        int rowH = (height() - top - bottom) / n;
+        rowH = std::min(rowH, 42);
+        const int gridH = rowH * n;
+        const int gridTop = top + std::max(0, (height() - top - bottom - gridH) / 2);
+
+        QFont small = k.font();
+        small.setPointSize(8);
+
+        // 图例
+        k.setPen(Qt::NoPen);
+        k.setBrush(QColor(0x18, 0x5F, 0xA5));
+        k.drawRect(left, 9, 12, 12);
+        k.setPen(QColor(0x5B, 0x65, 0x7A));
+        k.setFont(small);
+        k.drawText(QRect(left + 18, 7, 40, 16), Qt::AlignVCenter, QStringLiteral("开机"));
+        k.setPen(Qt::NoPen);
+        k.setBrush(QColor(0xEB, 0xEF, 0xF5));
+        k.drawRect(left + 66, 9, 12, 12);
+        k.setPen(QColor(0x5B, 0x65, 0x7A));
+        k.drawText(QRect(left + 84, 7, 40, 16), Qt::AlignVCenter, QStringLiteral("停机"));
+        k.setPen(Qt::NoPen);
+        k.setBrush(QColor(0xE8, 0xA3, 0x3D));
+        k.drawRect(left + 132, 9, 4, 12);
+        k.setPen(QColor(0x5B, 0x65, 0x7A));
+        k.drawText(QRect(left + 142, 7, 60, 16), Qt::AlignVCenter, QStringLiteral("启动事件"));
+
+        // 行：底色 + 开停色块 + 启动标记 + 行标签
+        for (int g = 0; g < n; ++g) {
+            const int y = gridTop + g * rowH;
+            k.setPen(Qt::NoPen);
+            k.fillRect(left, y, width() - left - right, rowH - 4,
+                       (g % 2 == 0) ? QColor(0xF7, 0xF9, 0xFC)
+                                    : QColor(0xFF, 0xFF, 0xFF));
+            const auto &row = m_on.at(g);
+            int startups = 0;
+            for (int t = 0; t < T; ++t) {
+                const double x = left + t * cellW;
+                if (row.at(t) == 1) {
+                    k.fillRect(int(x), y, int(std::ceil(cellW)), rowH - 4,
+                               QColor(0x18, 0x5F, 0xA5));
+                    if (t > 0 && row.at(t - 1) == 0) {
+                        ++startups;
+                        k.fillRect(int(x) - 1, y, 3, rowH - 4,
+                                   QColor(0xE8, 0xA3, 0x3D));
+                    }
+                } else {
+                    k.fillRect(int(x), y, int(std::ceil(cellW)), rowH - 4,
+                               QColor(0xEB, 0xEF, 0xF5));
+                }
+            }
+            QString costText;
+            if (g < m_startupCosts.size() && m_startupCosts.at(g) > 0.0)
+                costText = QStringLiteral(" · %1 元/次")
+                               .arg(m_startupCosts.at(g), 0, 'f', 0);
+            k.setPen(QColor(0x1C, 0x25, 0x34));
+            k.setFont(small);
+            k.drawText(QRect(4, y, left - 12, rowH - 4),
+                       Qt::AlignVCenter | Qt::AlignLeft,
+                       QStringLiteral("%1\n启动 %2 次%3")
+                           .arg(m_names.at(g))
+                           .arg(startups)
+                           .arg(costText));
+            k.setPen(QColor(0xE8, 0xED, 0xF5));
+            k.drawLine(left, y + rowH - 3, width() - right, y + rowH - 3);
+        }
+
+        // X 轴时刻刻度（0–24h，每 4 小时一档）
+        k.setPen(QColor(0x9A, 0xA4, 0xB8));
+        const double hoursPerPeriod = 24.0 / T;
+        for (int h = 0; h <= 24; h += 4) {
+            const int t = int(h / hoursPerPeriod);
+            if (t > T)
+                break;
+            const int x = int(left + t * cellW);
+            k.drawLine(x, gridTop, x, gridTop + gridH);
+            k.drawText(QRect(x - 22, gridTop + gridH + 4, 44, 14), Qt::AlignCenter,
+                       QStringLiteral("%1:00").arg(h, 2, 10, QChar('0')));
+        }
+    }
+
+private:
+    QStringList m_names;
+    QVector<double> m_startupCosts;
+    QVector<QVector<int>> m_on;
+};
+
+// ============================================================
 // 页面 3：出清结果（视角化指标卡 + 明细表）
 // ============================================================
 QWidget *MainWindow::buildResultPage()
@@ -795,6 +930,37 @@ QWidget *MainWindow::buildResultPage()
         *k.value = v;
         kpiLay->addWidget(card, 1);
     }
+
+    // UC（SCUC）专属 KPI 卡行：仅 UC 模式显示（其余模式隐藏不占位）
+    m_ucKpiRow = new QWidget(content);
+    auto *ucKpiLay = new QHBoxLayout(m_ucKpiRow);
+    ucKpiLay->setContentsMargins(0, 0, 0, 0);
+    ucKpiLay->setSpacing(10);
+    {
+        struct UcKpi { QLabel **value; const char *name; };
+        const UcKpi ucKpis[4] = {
+                                     {&m_ucKpiVals[0], "全天启动次数 (次)"},
+                                     {&m_ucKpiVals[1], "启动成本合计 (元)"},
+                                     {&m_ucKpiVals[2], "空载成本合计 (元)"},
+                                     {&m_ucKpiVals[3], "求解器总成本 (元)"},
+                                     };
+        for (const auto &k : ucKpis) {
+            auto *card = new QWidget(m_ucKpiRow);
+            card->setObjectName("kpiCard");
+            auto *n = new QLabel(QString::fromUtf8(k.name), card);
+            n->setObjectName("kpiName");
+            auto *v = new QLabel(QStringLiteral("--"), card);
+            v->setObjectName("kpiValue");
+            auto *l = new QVBoxLayout(card);
+            l->setContentsMargins(14, 12, 14, 12);
+            l->setSpacing(4);
+            l->addWidget(n);
+            l->addWidget(v);
+            *k.value = v;
+            ucKpiLay->addWidget(card, 1);
+        }
+    }
+    m_ucKpiRow->setVisible(false);
 
     auto *box = new QGroupBox(
         QStringLiteral("出清明细（随视角切换口径）"), content);
@@ -837,6 +1003,7 @@ QWidget *MainWindow::buildResultPage()
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(10);
     lay->addWidget(kpiRow);
+    lay->addWidget(m_ucKpiRow);
     lay->addWidget(m_mixBox);
     lay->addWidget(box, 1);
 
@@ -983,6 +1150,25 @@ QWidget *MainWindow::buildChartPage()
         m_renewSeries->attachAxis(m_axisPriceX);
         m_renewSeries->attachAxis(m_axisRenewY);
 
+        // 稀缺定价标记：出清价触顶 1500 元/MWh 的时段画红点
+        //   （UC 失负荷松弛 / 分段引擎稀缺封顶，V1.3.1 同口径）
+        m_scarcitySeries = new QScatterSeries();
+        m_scarcitySeries->setName(QStringLiteral("稀缺定价 1500"));
+        m_scarcitySeries->setColor(QColor(0xC9, 0x50, 0x3F));
+        m_scarcitySeries->setMarkerSize(11.0);
+        chart->addSeries(m_scarcitySeries);
+        m_scarcitySeries->attachAxis(m_axisPriceX);
+        m_scarcitySeries->attachAxis(m_axisPriceY);
+        m_scarcitySeries->setVisible(false);
+        connect(m_scarcitySeries, &QScatterSeries::hovered, this,
+                [this](const QPointF &point, bool state) {
+                    if (state)
+                        statusBar()->showMessage(
+                            QStringLiteral("%1 供给不足，触发稀缺定价 1500 元/MWh")
+                                .arg(point.x(), 0, 'f', 2),
+                            6000);
+                });
+
         chart->setTitle(QStringLiteral("真实出清：早晚高峰电价抬升 · 午间光伏压价"));
         chart->legend()->setAlignment(Qt::AlignBottom);
 
@@ -992,6 +1178,24 @@ QWidget *MainWindow::buildChartPage()
         auto *lay = new QVBoxLayout(box);
         lay->addWidget(view);
         tabs->addTab(box, QStringLiteral("分时电价曲线"));
+    }
+
+    // 页签 3：UC 启停计划（仅 SCUC 模式有数据；其余模式显示引导说明）
+    {
+        auto *box = new QGroupBox(QStringLiteral(
+            "机组启停计划（SCUC · “UC 定开停、ED 定价格”）"));
+        m_ucGantt = new UcGanttWidget(box);
+        m_ucHint = new QLabel(QStringLiteral(
+            "当前结果不含启停计划——只有「SCUC 机组组合」机制会求解逐时段开停机。\n"
+            "在「② 仿真控制」选中 SCUC 卡并重新仿真后，此处展示每台机组全天的\n"
+            "开机（深蓝）/ 停机（浅灰）时间线与启动事件（琥珀色标记）。"), box);
+        m_ucHint->setAlignment(Qt::AlignCenter);
+        m_ucHint->setObjectName("hintLabel");
+        auto *glay = new QVBoxLayout(box);
+        glay->addWidget(m_ucGantt, 1);
+        glay->addWidget(m_ucHint);
+        m_ucGantt->setVisible(false);
+        tabs->addTab(box, QStringLiteral("UC 启停计划"));
     }
 
     auto *lay = new QVBoxLayout(content);
@@ -1063,6 +1267,16 @@ QWidget *MainWindow::buildExportPage()
     connect(dailyBtn, &QPushButton::clicked, this, &MainWindow::onExportDaily);
     connect(curveBtn, &QPushButton::clicked, this, &MainWindow::onExportCurve);
 
+    // UC 专属：机组启停计划导出（仅 SCUC 结果可用，随结果显示/隐藏）
+    m_btnExportUc = new QPushButton(QStringLiteral("⬇ 导出机组启停计划 CSV（SCUC）"), content);
+    m_btnExportUc->setObjectName("demoBtn");
+    m_btnExportUc->setToolTip(QStringLiteral(
+        "导出求解器生成的机组 × 时段启停矩阵（0=停机 1=开机）与出力计划（MW），\n"
+        "并附各机组启动次数与启动成本小计；仅 SCUC 机制产生启停计划"));
+    m_btnExportUc->setVisible(false);
+    connect(m_btnExportUc, &QPushButton::clicked,
+            this, &MainWindow::onExportUcSchedule);
+
     auto *logBox = new QGroupBox(QStringLiteral("导出记录（本次会话）"), content);
     m_exportLog = new QListWidget(logBox);
     m_exportLog->setObjectName("exportLog");
@@ -1073,6 +1287,7 @@ QWidget *MainWindow::buildExportPage()
     auto *btnRow = new QHBoxLayout();
     btnRow->addWidget(dailyBtn);
     btnRow->addWidget(curveBtn);
+    btnRow->addWidget(m_btnExportUc);
     btnRow->addStretch();
 
     auto *lay = new QVBoxLayout(content);
@@ -2180,6 +2395,30 @@ void MainWindow::refreshResultPage()
     m_kpiFee->setText(QStringLiteral("%1").arg(vals[2], 0, 'f', 0));
     m_kpiSpread->setText(QStringLiteral("%1").arg(vals[3], 0, 'f', 2));
 
+    // UC（SCUC）专属 KPI：启动次数 / 启动成本 / 空载成本 / 求解器总成本
+    //   仅 UC 模式显示该卡行（其余模式隐藏，不占位）
+    if (m_ucKpiRow) {
+        const bool uc = (m_session.result.mode == QStringLiteral("UC"));
+        m_ucKpiRow->setVisible(uc);
+        if (uc) {
+            if (m_ucKpiVals[0])
+                m_ucKpiVals[0]->setText(
+                    QStringLiteral("%1").arg(m_session.result.startupCount));
+            if (m_ucKpiVals[1])
+                m_ucKpiVals[1]->setText(QStringLiteral("¥ %1")
+                                            .arg(m_session.result.startupCostTotal,
+                                                 0, 'f', 0));
+            if (m_ucKpiVals[2])
+                m_ucKpiVals[2]->setText(QStringLiteral("¥ %1")
+                                            .arg(m_session.result.noLoadCostTotal,
+                                                 0, 'f', 0));
+            if (m_ucKpiVals[3])
+                m_ucKpiVals[3]->setText(QStringLiteral("¥ %1")
+                                            .arg(m_session.result.totalCost,
+                                                 0, 'f', 0));
+        }
+    }
+
     // 明细表：平台=逐时段；发电/购电=逐主体
     if (p == Perspective::Platform) {
         m_resultTable->setColumnCount(5);
@@ -2203,12 +2442,26 @@ void MainWindow::refreshResultPage()
         }
     } else {
         const bool genSide = (p == Perspective::Gen);
-        m_resultTable->setColumnCount(6);
-        m_resultTable->setHorizontalHeaderLabels({
-            QStringLiteral("时段"), QStringLiteral("主体"), QStringLiteral("段"),
-            QStringLiteral("报价 (元/MWh)"), QStringLiteral("中标量 (MWh)"),
-            genSide ? QStringLiteral("收入 (元)") : QStringLiteral("费用 (元)"),
-        });
+        // UC（SCUC）发电侧明细：状态列（开/停机）+ 出力区间列替代无意义的"段"列，
+        //   报价列口径 = 边际成本申报——与分段撮合的量价段结构明确区分
+        const bool ucGen =
+            genSide && (m_session.result.mode == QStringLiteral("UC"));
+        if (ucGen) {
+            m_resultTable->setColumnCount(7);
+            m_resultTable->setHorizontalHeaderLabels({
+                QStringLiteral("时段"), QStringLiteral("机组"),
+                QStringLiteral("状态"), QStringLiteral("出力区间 (MW)"),
+                QStringLiteral("边际成本 (元/MWh)"), QStringLiteral("出力 (MW)"),
+                QStringLiteral("收入 (元)"),
+            });
+        } else {
+            m_resultTable->setColumnCount(6);
+            m_resultTable->setHorizontalHeaderLabels({
+                QStringLiteral("时段"), QStringLiteral("主体"), QStringLiteral("段"),
+                QStringLiteral("报价 (元/MWh)"), QStringLiteral("中标量 (MWh)"),
+                genSide ? QStringLiteral("收入 (元)") : QStringLiteral("费用 (元)"),
+            });
+        }
         int rows = 0;
         for (const auto &pr : periods)
             rows += genSide ? pr.genDetails.size() : pr.conDetails.size();
@@ -2219,13 +2472,35 @@ void MainWindow::refreshResultPage()
             for (const auto &e : list) {
                 m_resultTable->setItem(r, 0, new QTableWidgetItem(pr.time));
                 m_resultTable->setItem(r, 1, new QTableWidgetItem(e.name));
-                m_resultTable->setItem(r, 2, new QTableWidgetItem(QString::number(e.segment)));
-                m_resultTable->setItem(r, 3, new QTableWidgetItem(
-                                               QStringLiteral("%1").arg(e.bidPrice, 0, 'f', 1)));
-                m_resultTable->setItem(r, 4, new QTableWidgetItem(
-                                               QStringLiteral("%1").arg(e.clearedMW, 0, 'f', 1)));
-                m_resultTable->setItem(r, 5, new QTableWidgetItem(
-                                               QStringLiteral("%1").arg(e.money, 0, 'f', 1)));
+                if (ucGen) {
+                    m_resultTable->setItem(
+                        r, 2,
+                        new QTableWidgetItem(e.ucOn == 1
+                                                 ? QStringLiteral("✓ 开机")
+                                                 : QStringLiteral("— 停机")));
+                    m_resultTable->setItem(
+                        r, 3,
+                        new QTableWidgetItem(QStringLiteral("%1 ~ %2")
+                                                  .arg(e.ucPMin, 0, 'f', 0)
+                                                  .arg(e.ucPMax, 0, 'f', 0)));
+                    m_resultTable->setItem(
+                        r, 4, new QTableWidgetItem(
+                                  QStringLiteral("%1").arg(e.bidPrice, 0, 'f', 1)));
+                    m_resultTable->setItem(
+                        r, 5, new QTableWidgetItem(
+                                  QStringLiteral("%1").arg(e.clearedMW, 0, 'f', 1)));
+                    m_resultTable->setItem(
+                        r, 6, new QTableWidgetItem(
+                                  QStringLiteral("%1").arg(e.money, 0, 'f', 1)));
+                } else {
+                    m_resultTable->setItem(r, 2, new QTableWidgetItem(QString::number(e.segment)));
+                    m_resultTable->setItem(r, 3, new QTableWidgetItem(
+                                                   QStringLiteral("%1").arg(e.bidPrice, 0, 'f', 1)));
+                    m_resultTable->setItem(r, 4, new QTableWidgetItem(
+                                                   QStringLiteral("%1").arg(e.clearedMW, 0, 'f', 1)));
+                    m_resultTable->setItem(r, 5, new QTableWidgetItem(
+                                                   QStringLiteral("%1").arg(e.money, 0, 'f', 1)));
+                }
                 ++r;
             }
         }
@@ -2296,6 +2571,33 @@ void MainWindow::refreshChartPage()
             const double yR = std::ceil(std::max(100.0, maxRenew * 1.15) / 100.0) * 100.0;
             m_axisRenewY->setRange(0.0, yR);
             m_axisRenewY->setTickCount(5);
+        }
+    }
+
+    // 稀缺定价标记：出清价触顶 1500 元/MWh 的时段（红点；无则隐藏散点系列）
+    if (m_scarcitySeries) {
+        m_scarcitySeries->clear();
+        const double hourPerPeriod = 24.0 / std::max(1, T);
+        for (int i = 0; i < T; ++i) {
+            if (periods[i].clearingPrice >= 1499.5)
+                m_scarcitySeries->append((i + 1) * hourPerPeriod,
+                                         periods[i].clearingPrice);
+        }
+        m_scarcitySeries->setVisible(!m_scarcitySeries->points().isEmpty());
+    }
+
+    // UC 启停甘特：仅 SCUC 结果有启停计划；其余模式显示引导说明
+    if (m_ucGantt && m_ucHint) {
+        const bool uc = (m_session.result.mode == QStringLiteral("UC"))
+                        && !m_session.result.ucUnitOn.isEmpty();
+        m_ucGantt->setVisible(uc);
+        m_ucHint->setVisible(!uc);
+        if (uc) {
+            m_ucGantt->setSchedule(m_session.result.ucUnitNames,
+                                   m_session.result.ucUnitStartupCost,
+                                   m_session.result.ucUnitOn);
+        } else {
+            m_ucGantt->clearSchedule();
         }
     }
 
@@ -2531,6 +2833,10 @@ void MainWindow::refreshExportPage()
     m_sumFee->setText(QStringLiteral("¥ %1").arg(fee, 0, 'f', 0));
     m_sumSpread->setText(QStringLiteral("%1").arg(mx / mn, 0, 'f', 2));
 
+    // UC 专属导出按钮：仅 SCUC 结果显示
+    if (m_btnExportUc)
+        m_btnExportUc->setVisible(m_session.result.mode == QStringLiteral("UC"));
+
     updateFileNamePreviews();
 }
 
@@ -2689,23 +2995,126 @@ void MainWindow::onExportDaily()
     } else {
         // 发电侧 / 购电侧逐主体账单
         const bool genSide = (p == Perspective::Gen);
-        out << (genSide
-                    ? QStringLiteral("时段,机组,段,报价(元/MWh),中标量(MWh),收入(元)\n")
-                    : QStringLiteral("时段,用户,段,报价(元/MWh),中标量(MWh),费用(元)\n"));
+        // UC 发电侧明细口径与 P3 表格一致：状态 + 出力区间替代"段"列
+        const bool ucGen =
+            genSide && (m_session.result.mode == QStringLiteral("UC"));
+        if (ucGen) {
+            out << QStringLiteral("时段,机组,状态,出力区间(MW),边际成本(元/MWh),出力(MW),收入(元)\n");
+        } else {
+            out << (genSide
+                        ? QStringLiteral("时段,机组,段,报价(元/MWh),中标量(MWh),收入(元)\n")
+                        : QStringLiteral("时段,用户,段,报价(元/MWh),中标量(MWh),费用(元)\n"));
+        }
         double volSum = 0.0, moneySum = 0.0;
         for (const auto &pr : periods) {
             const auto &list = genSide ? pr.genDetails : pr.conDetails;
             for (const auto &e : list) {
-                out << pr.time << ',' << e.name << ',' << e.segment << ','
-                    << QString::number(e.bidPrice, 'f', 1) << ','
-                    << QString::number(e.clearedMW, 'f', 1) << ','
-                    << QString::number(e.money, 'f', 1) << '\n';
+                if (ucGen) {
+                    out << pr.time << ',' << e.name << ','
+                        << (e.ucOn == 1 ? QStringLiteral("开机") : QStringLiteral("停机"))
+                        << ',' << QString::number(e.ucPMin, 'f', 0)
+                        << '~' << QString::number(e.ucPMax, 'f', 0)
+                        << ',' << QString::number(e.bidPrice, 'f', 1) << ','
+                        << QString::number(e.clearedMW, 'f', 1) << ','
+                        << QString::number(e.money, 'f', 1) << '\n';
+                } else {
+                    out << pr.time << ',' << e.name << ',' << e.segment << ','
+                        << QString::number(e.bidPrice, 'f', 1) << ','
+                        << QString::number(e.clearedMW, 'f', 1) << ','
+                        << QString::number(e.money, 'f', 1) << '\n';
+                }
                 volSum += e.clearedMW;
                 moneySum += e.money;
             }
         }
         out << QStringLiteral("汇总,,,%1,%2\n")
                 .arg(QString::number(volSum, 'f', 1), QString::number(moneySum, 'f', 1));
+    }
+    f.close();
+
+    addExportRecord(QFileInfo(path).fileName());
+    statusBar()->showMessage(QStringLiteral("已导出：%1").arg(path), 8000);
+}
+
+// 导出 SCUC 机组启停/出力计划：机组 × 96 时段 0/1 矩阵 + 出力计划(MW)，
+//   附各机组 pMin/pMax、启动成本与全天启动次数——调度计划的核心交付物
+void MainWindow::onExportUcSchedule()
+{
+    if (!m_hasResult || !m_btnExportUc)
+        return;
+    if (m_session.result.mode != QStringLiteral("UC")
+        || m_session.result.ucUnitOn.isEmpty()) {
+        statusBar()->showMessage(
+            QStringLiteral("当前结果不含启停计划——只有 SCUC 机组组合机制可导出"), 6000);
+        return;
+    }
+
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("导出机组启停计划"), QStringLiteral("机组启停计划.csv"),
+        QStringLiteral("CSV 文件 (*.csv)"));
+    if (path.isEmpty())
+        return;
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        statusBar()->showMessage(QStringLiteral("导出失败：无法写入文件"), 6000);
+        return;
+    }
+    QTextStream out(&f);
+    out.setEncoding(QStringConverter::Utf8);
+    out.setGenerateByteOrderMark(true);
+
+    const auto &res = m_session.result;
+    const int G = res.ucUnitNames.size();
+    const int T = res.periods.size();
+
+    // 段一：启停矩阵（0=停机 1=开机）
+    out << QStringLiteral("机组启停计划（SCUC，0=停机 1=开机）\n");
+    out << QStringLiteral("机组,pMin(MW),pMax(MW),启动成本(元/次),启动次数");
+    for (int t = 1; t <= T; ++t)
+        out << ',' << QStringLiteral("时段%1").arg(t);
+    out << '\n';
+    for (int g = 0; g < G; ++g) {
+        int startups = 0;
+        const auto &row = res.ucUnitOn.at(g);
+        for (int t = 1; t < T; ++t)
+            if (row.at(t) == 1 && row.at(t - 1) == 0)
+                ++startups;
+        out << res.ucUnitNames.at(g);
+        // 技术参数从发电明细第一条取（facade 已随明细写入 ucPMin/ucPMax）
+        double pMin = 0.0, pMax = 0.0;
+        for (const auto &pr : res.periods) {
+            for (const auto &e : pr.genDetails) {
+                if (e.name + QChar(' ') + e.id == res.ucUnitNames.at(g)
+                    && e.ucOn >= 0) {
+                    pMin = e.ucPMin;
+                    pMax = e.ucPMax;
+                    break;
+                }
+            }
+            if (pMax > 0.0)
+                break;
+        }
+        out << ',' << QString::number(pMin, 'f', 0)
+            << ',' << QString::number(pMax, 'f', 0);
+        out << ',' << QString::number(res.ucUnitStartupCost.at(g), 'f', 0)
+            << ',' << startups;
+        for (int t = 0; t < T; ++t)
+            out << ',' << row.at(t);
+        out << '\n';
+    }
+
+    // 段二：出力计划（MW）
+    out << QStringLiteral("\n出力计划 (MW)\n");
+    out << QStringLiteral("机组");
+    for (int t = 1; t <= T; ++t)
+        out << ',' << QStringLiteral("时段%1").arg(t);
+    out << '\n';
+    for (int g = 0; g < G; ++g) {
+        out << res.ucUnitNames.at(g);
+        for (int t = 0; t < T; ++t)
+            out << ',' << QString::number(res.ucUnitP.at(g).at(t), 'f', 1);
+        out << '\n';
     }
     f.close();
 

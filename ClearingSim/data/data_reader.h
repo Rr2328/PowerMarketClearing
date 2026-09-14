@@ -5,7 +5,7 @@
 #include <QStringList>
 #include <QVector>
 
-#include "../quadratic_clearing.h"
+#include "../engine/quadratic_clearing.h"
 #include "../uc/uc_solver.h"     // GeneratorMeta（SCUC 机组技术经济参数，S4）
 
 // 发电侧申报数据（V1.3 长表口径）

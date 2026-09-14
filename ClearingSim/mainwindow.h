@@ -23,6 +23,7 @@ class QTabWidget;
 class QButtonGroup;
 class QRadioButton;
 class QValueAxis;
+class UcGanttWidget;             // UC 启停甘特图（mainwindow.cpp 内定义）
 
 // 主窗口：深色科技风封面页（隐藏导航）→ 进入平台 → 左导航（5 页）+ 右侧内容区
 // + 顶栏（页面标题/副标题 + 三视角切换条 + 数据就绪灯 + 一键演示）+ 底部状态栏
@@ -44,6 +45,7 @@ private slots:
     void onRunSim();        // 开始仿真：场景构建 → 逐时段出清
     void onExportDaily();   // 导出结算日报 CSV（按当前视角）
     void onExportCurve();   // 导出电价曲线数据 CSV
+    void onExportUcSchedule(); // 导出 SCUC 机组启停/出力计划 CSV（仅 UC 模式）
     void onLoadSamples();   // P1：一键加载内置样例（benchmark 或 scenario）
     void onImportCsv();     // P1：选择 CSV 文件（按文件名自动识别两张申报表）
     void onClearData();     // P1：清空数据
@@ -160,6 +162,14 @@ private:
     QLabel *m_kpiFee    = nullptr;
     QLabel *m_kpiSpread = nullptr;
     QLabel *m_kpiNames[4] = {nullptr, nullptr, nullptr, nullptr};   // 指标名称（随视角切换）
+
+    // UC（SCUC）专属展示：KPI 卡行（P3）+ 启停甘特（P4）+ 稀缺标记 + 计划导出（P5）
+    QWidget *m_ucKpiRow = nullptr;      // P3 UC KPI 卡行（仅 UC 模式显示）
+    QLabel  *m_ucKpiVals[4] = {nullptr, nullptr, nullptr, nullptr};
+    UcGanttWidget *m_ucGantt = nullptr; // P4 启停甘特图（自绘）
+    QLabel  *m_ucHint = nullptr;        // P4 非 UC 模式时的引导说明
+    QScatterSeries *m_scarcitySeries = nullptr; // 分时电价图稀缺价红点（1500）
+    QPushButton *m_btnExportUc = nullptr;       // P5 导出机组启停计划按钮
     // 结算摘要（P5）
     QLabel *m_sumAvg    = nullptr;
     QLabel *m_sumMax    = nullptr;
