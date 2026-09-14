@@ -3,12 +3,9 @@
 #include <QFile>
 #include <QTextStream>
 
-<<<<<<< HEAD
-=======
 namespace teammate
 {
 
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
 // 拆分 CSV 行并清理字段
 QStringList splitCsvLine(const QString &line)
 {QStringList columns =line.split(',',Qt::KeepEmptyParts);//保留空字符
@@ -102,10 +99,6 @@ void appendErrors(const QString &fileName,const QStringList &sourceErrors,QStrin
 {for (const QString &error : sourceErrors)
     {targetErrors.append("[" +fileName +"] " +error);
     }
-<<<<<<< HEAD
-}
-=======
 }
 
 } // namespace teammate
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)

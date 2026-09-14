@@ -6,12 +6,9 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QSet>
-<<<<<<< HEAD
-=======
 
 #include <cmath>
 
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
 // MarketData 集成测试 V1.3：校验 CSV → MarketData → PeriodScenario 全链路数据流转。
 namespace
 {
@@ -60,16 +57,17 @@ QString findRepoRoot()
 
 // 按时段数生成一组四文件路径。
 DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
-{const QString suffix =QString::number(periodCount) +"period";
+{
+    // V1.3 契约：96 为唯一原生粒度，样例仅一份长表；
+    //   periodCount 参数保留兼容旧调用点，24 时段视图由聚合合成（见 main）
+    Q_UNUSED(periodCount);
     DataFileSet files;
-    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids_" +suffix +".csv");
-    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids_" +suffix +".csv");
-    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve_" +suffix +".csv");
-    files.renewableOutputFile =QDir(scenarioDir).filePath("renewable_output_" +suffix +".csv");
+    files.generatorBidsFile =QDir(scenarioDir).filePath("generator_bids.csv");
+    files.consumerBidsFile =QDir(scenarioDir).filePath("consumer_bids.csv");
+    files.loadCurveFile =QDir(scenarioDir).filePath("load_curve.csv");
+    // V1.3.5 契约：新能源不进申报表（RENEW = 渗透率 × 负荷），无独立新能源文件。
     return files;
 }
-<<<<<<< HEAD
-=======
 
 // （合并适配，V1.3 契约 §7.2）24 时段视图由 96 期数据聚合生成：
 //   负荷用 ScenarioManager 的 96→24 聚合；发电/购电申报按
@@ -160,7 +158,6 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
     return true;
 }
 
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
 // 输出错误明细。
 void printErrors(const QStringList &errors)
 {for (const QString &error : errors)
@@ -185,51 +182,6 @@ QSet<QString> consumerIds(const QVector<ConsumerBid> &data)
     }
     return ids;
 }
-<<<<<<< HEAD
-// 提取新能源机组 ID 集合。
-QSet<QString> renewableIds(const QVector<RenewableOutput> &data)
-{QSet<QString> ids;
-    for (const RenewableOutput &item : data)
-    {ids.insert(item.generatorId);
-    }
-    return ids;
-}
-// 统计指定时段的发电申报条数。
-int countGeneratorBids(const MarketData &data,int period)
-{int count = 0;
-    for (const GeneratorBid &bid : data.generatorBids)
-    {if (bid.period ==period)
-        {++count;
-        }
-    }
-    return count;
-}
-// 统计指定时段的用户申报条数。
-int countConsumerBids(const MarketData &data,int period)
-{int count = 0;
-    for (const ConsumerBid &bid : data.consumerBids)
-    {if (bid.period ==period)
-        {++count;
-        }
-    }
-    return count;
-}
-// 校验单时段场景的申报数量与 MarketData 中该时段一致。
-bool scenarioMatchesMarketData(const PeriodScenario &scenario,const MarketData &data)
-{return scenario.generatorBids.size() ==countGeneratorBids(data,scenario.period) &&scenario.consumerBids.size() ==countConsumerBids(data,scenario.period);
-}
-// 跑通「CSV → MarketData → PeriodScenario」完整链路测试。
-bool runPipelineTest(const QString &scenarioDir,int periodCount,TimeGranularity granularity)
-{qInfo().noquote()<< "-----"<< periodCount<< "period pipeline -----";
-    MarketData data;
-    QStringList errors;
-    bool ok =DataReader::readAll(makeFileSet(scenarioDir,periodCount),data,errors);
-    check(ok,QString("%1 时段 CSV → MarketData").arg(periodCount));
-    if (!ok)
-    {printErrors(errors);
-        return false;
-    }
-=======
 
 // 校验单时段场景的负荷与 MarketData 负荷曲线一致（V1.3.5：场景仅承载负荷口径）。
 bool scenarioMatchesMarketData(const PeriodScenario &scenario,const MarketData &data)
@@ -245,17 +197,14 @@ bool pipelineFromData(const MarketData &data,int periodCount)
 {qInfo().noquote()<< "-----"<< periodCount<< "period pipeline -----";
     QStringList errors;
     bool ok =false;
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     check(data.loadCurve.size() ==periodCount,QString("%1 时段负荷数量正确").arg(periodCount));
     const QSet<QString> genIds =generatorIds(data.generatorBids);
     const QSet<QString> conIds =consumerIds(data.consumerBids);
-    const QSet<QString> renIds =renewableIds(data.renewableOutputs);
     check(!genIds.isEmpty(),QString("%1 时段包含发电主体").arg(periodCount));
     check(!conIds.isEmpty(),QString("%1 时段包含购电主体").arg(periodCount));
-    check(!renIds.isEmpty(),QString("%1 时段包含新能源主体").arg(periodCount));
     QVector<PeriodScenario> scenarios;
     errors.clear();
-    ok =ScenarioManager::buildPeriodScenarios(data,granularity,scenarios,errors);
+    ok =ScenarioManager::buildPeriodScenarios(data,periodCount,scenarios,errors);
     check(ok,QString("%1 时段 MarketData → PeriodScenario").arg(periodCount));
     if (!ok)
     {printErrors(errors);
@@ -266,13 +215,13 @@ bool pipelineFromData(const MarketData &data,int periodCount)
     {const PeriodScenario &first =scenarios.first();
         const PeriodScenario &last =scenarios.last();
         check(first.period == 1 &&last.period == periodCount,QString("%1 时段场景编号完整").arg(periodCount));
-        check(scenarioMatchesMarketData(first,data),QString("%1 时段第1场景申报数量与 MarketData 一致").arg(periodCount));
-        check(scenarioMatchesMarketData(last,data),QString("%1 时段最后场景申报数量与 MarketData 一致").arg(periodCount));
-        check(!first.generatorBids.isEmpty() &&!first.consumerBids.isEmpty(),QString("%1 时段单场景可直接提供给算法").arg(periodCount));
+        check(scenarioMatchesMarketData(first,data),QString("%1 时段第1场景负荷与 MarketData 一致").arg(periodCount));
+        check(scenarioMatchesMarketData(last,data),QString("%1 时段最后场景负荷与 MarketData 一致").arg(periodCount));
+        check(first.loadMW >0.0 &&last.loadMW >0.0,QString("%1 时段单场景负荷数据可直接提供给算法").arg(periodCount));
     }
     // 校验 MarketData 可完整拷贝。
     MarketData copiedData =data;
-    check(copiedData.generatorBids.size() ==data.generatorBids.size() &&copiedData.consumerBids.size() ==data.consumerBids.size() &&copiedData.loadCurve.size() ==data.loadCurve.size() &&copiedData.renewableOutputs.size() ==data.renewableOutputs.size(),QString("%1 时段 MarketData 可完整复制").arg(periodCount));
+    check(copiedData.generatorBids.size() ==data.generatorBids.size() &&copiedData.consumerBids.size() ==data.consumerBids.size() &&copiedData.loadCurve.size() ==data.loadCurve.size(),QString("%1 时段 MarketData 可完整复制").arg(periodCount));
     return true;
 }
 
@@ -293,8 +242,6 @@ int main(int argc,char *argv[])
     check(QDir(scenarioDir).exists(),"定位 scenario 场景目录");
     if (!QDir(scenarioDir).exists())
     {return 1;
-<<<<<<< HEAD
-=======
     }
     // 96 期原生链路（V1.3 长表：CSV → DataReader → 场景）。
     MarketData data96;
@@ -320,12 +267,7 @@ int main(int argc,char *argv[])
         else
         {printErrors(errors);
         }
->>>>>>> 197592d (刚刚那一版没有Highs，重新改了一版)
     }
-    // 24 时段链路测试。
-    runPipelineTest(scenarioDir,24,TimeGranularity::Hourly24);
-    // 96 时段链路测试。
-    runPipelineTest(scenarioDir,96,TimeGranularity::QuarterHourly96);
     // 输出汇总，失败数决定退出码。
     qInfo().noquote()<< "===============================================";
     if (failedTests == 0)
