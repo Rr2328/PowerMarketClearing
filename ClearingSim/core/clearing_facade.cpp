@@ -376,201 +376,205 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData&market,
     }
     return result;
 }
-// ------------------------------------------------------------------
-// SCUC 机组组合模式（求解器方案 S4，HiGHS MILP）
-//   发电侧以 generator_meta.csv 的线性成本参与（marginalCost 元/MWh），
-//   一次求解全天 96 期：开停机 u、出力 p（pMin 基础量 / 爬坡 /
-//   最小开停机时间 / 启动费都在 MILP 内）。
-//   出清价 = 第二阶段逐时段经济调度的功率平衡对偶 λ(t)（uc_solver.h 注释）。
-//   需求口径与二次模式一致（V1.3.3）：Σ购电申报量(t) 优先、负荷曲线回退；
-//   渗透率换算同式（契约 §5.3）。结算口径 MCP 同构：全部中标电量按 λ 结算。
-// ------------------------------------------------------------------
-ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
+/*SCUC机组组合模式（HiGHS MILP求解器）：
+     * 求解器决定全天96期的开停机与出力（基础量、爬坡、最小开/停机时间、启动费用），
+     * 出清价=逐时段经济调度的功率平衡对偶变量。*/
+ClearingResult ClearingFacade::clearPeriodsUc(const MarketData&market,
                                               int periodCount, double penetration)
 {
     ClearingResult result;
-    result.mode = QStringLiteral("UC");
-    result.sourceName = QStringLiteral("SCUC 机组组合 · 求解器边际定价");
-
-    if (market.generatorMeta.isEmpty())
-        return result; // 模式未启用（未提供 generator_meta.csv）
-
-    // 96 期净负荷向量（求解器一次解全天——爬坡/最小开停机是跨期约束）
+    result.mode=QStringLiteral("UC");
+    result.sourceName=QStringLiteral("SCUC 机组组合 · 求解器边际定价");
+    if(market.generatorMeta.isEmpty())
+        return result; // 模式未启用
+    //96 期净负荷向量（求解器一次解全天——爬坡/最小开停机是跨期约束）
     QVector<double> demand;
-    QVector<double> renewOf;      // 各期新能源消纳（结果聚合用）
+    QVector<double> renewOf;//各期新能源消纳
     QVector<double> loadOf;
     demand.reserve(96);
     renewOf.reserve(96);
     loadOf.reserve(96);
-    for (int period = 1; period <= 96; ++period) {
-        double load = totalDemandAt(market, period);
-        if (load <= 0.0)
-            load = loadAt(market, period);
-        const double renewCap = renewCapacityAt(market, period, penetration);
-        const double renewActual = std::min(renewCap, std::max(0.0, load));
-        demand.append(std::max(0.0, load - renewActual));
+    for(int period=1;period<=96;++period)
+    {
+        double load=totalDemandAt(market,period);
+        if(load<=0.0)
+            load=loadAt(market,period);
+        const double renewCap=renewCapacityAt(market,period,penetration);
+        const double renewActual=std::min(renewCap,std::max(0.0,load));
+        demand.append(std::max(0.0,load-renewActual));
         renewOf.append(renewActual);
         loadOf.append(load);
     }
 
-    const UcSolution s = solveUcMilp(market.generatorMeta, demand);
-    if (!s.ok) {
-        // 诊断日志：定位应用内求解失败原因（测试同数据可行，需对比入参）
-        double dmin = std::numeric_limits<double>::max(), dmax = -dmin, dsum = 0.0;
-        for (double v : demand) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); dsum += v; }
-        double pMaxSum = 0.0, pMinSum = 0.0;
-        for (const auto &g : market.generatorMeta) { pMaxSum += g.pMax; pMinSum += g.pMin; }
-        qWarning() << "[UC-DIAG] solve failed:" << s.message
-                   << "units =" << market.generatorMeta.size()
-                   << "demand min/max/sum =" << dmin << dmax << dsum
-                   << "pMinSum/pMaxSum =" << pMinSum << pMaxSum
-                   << "genBids =" << market.generatorBids.size()
-                   << "conBids =" << market.consumerBids.size()
-                   << "loadCurve =" << market.loadCurve.size()
-                   << "penetration =" << penetration;
-        result.sourceName = QStringLiteral("SCUC 求解失败：%1").arg(s.message);
-        return result; // periods 为空，界面显示空态
+    const UcSolution s=solveUcMilp(market.generatorMeta,demand);
+    if (!s.ok)
+    {
+        //定位应用内求解失败原因
+        double dmin=std::numeric_limits<double>::max(),dmax=-dmin,dsum=0.0;
+        for(double v:demand)
+        {
+            dmin=std::min(dmin,v);
+            dmax=std::max(dmax,v);
+            dsum+=v;
+        }
+        double pMaxSum=0.0,pMinSum=0.0;
+        for(const auto&g:market.generatorMeta)
+        {
+            pMaxSum+=g.pMax;
+            pMinSum+=g.pMin;
+        }
+        qWarning()<<"[UC-DIAG] solve failed:"<<s.message
+                   <<"units ="<<market.generatorMeta.size()
+                   <<"demand min/max/sum ="<<dmin<<dmax<<dsum
+                   <<"pMinSum/pMaxSum ="<<pMinSum<<pMaxSum
+                   <<"genBids ="<<market.generatorBids.size()
+                   <<"conBids ="<<market.consumerBids.size()
+                   <<"loadCurve ="<<market.loadCurve.size()
+                   <<"penetration ="<<penetration;
+        result.sourceName=QStringLiteral("SCUC 求解失败：%1").arg(s.message);
+        return result;//periods为空
     }
-
-    // 逐期聚合为 PeriodResult（口径与二次模式一致）
-    QVector<PeriodResult> raw;
+    //逐期聚合为PeriodResult
+    QVector<PeriodResult>raw;
     raw.reserve(96);
-    for (int period = 1; period <= 96; ++period) {
-        const int t = period - 1;
-        const double lam = s.lambda[t];
-        double genSum = 0.0;
-        for (int g = 0; g < market.generatorMeta.size(); ++g)
-            genSum += s.p[g][t];
-
+    for(int period=1;period<=96;++period)
+    {
+        const int t=period-1;
+        const double lam=s.lambda[t];
+        double genSum=0.0;
+        for (int g=0;g<market.generatorMeta.size();++g)
+            genSum+=s.p[g][t];
         PeriodResult out;
-        out.period = period;
-        out.time = periodTime(period, 96);
-        out.loadMW = loadOf[t];
-        out.renewMW = renewOf[t];
-        out.clearingPrice = lam;
-        out.clearedMW = renewOf[t] + genSum;
-
-        // 发电侧明细：新能源 0 价段 + 各机组（按 λ 统一结算，MCP 同构）
-        if (renewOf[t] > 0.0) {
+        out.period=period;
+        out.time=periodTime(period,96);
+        out.loadMW=loadOf[t];
+        out.renewMW=renewOf[t];
+        out.clearingPrice=lam;
+        out.clearedMW=renewOf[t]+genSum;
+        //发电侧明细
+        if(renewOf[t]>0.0)
+        {
             EntityCleared re;
-            re.id = QStringLiteral("RENEW");
-            re.name = QStringLiteral("新能源出力");
-            re.segment = 0;
-            re.bidPrice = 0.0;
-            re.clearedMW = renewOf[t];
-            re.money = renewOf[t] * lam;
+            re.id=QStringLiteral("RENEW");
+            re.name=QStringLiteral("新能源出力");
+            re.segment=0;
+            re.bidPrice=0.0;
+            re.clearedMW=renewOf[t];
+            re.money=renewOf[t]*lam;
             out.genDetails.append(re);
         }
-        for (int g = 0; g < market.generatorMeta.size(); ++g) {
-            const auto &m = market.generatorMeta[g];
+        for(int g=0;g<market.generatorMeta.size();++g)
+        {
+            const auto&m=market.generatorMeta[g];
             EntityCleared e;
-            e.id = m.id;
-            e.name = m.name;
-            e.segment = 0;
-            e.bidPrice = m.marginalCost;   // 电量成本申报口径
-            e.clearedMW = s.p[g][t];
-            e.money = s.p[g][t] * lam;
-            e.ucOn = s.u[g][t];            // UC 专用：启停状态与技术出力区间
-            e.ucPMin = m.pMin;
-            e.ucPMax = m.pMax;
+            e.id=m.id;
+            e.name=m.name;
+            e.segment=0;
+            e.bidPrice=m.marginalCost;//电量成本申报口径
+            e.clearedMW=s.p[g][t];
+            e.money=s.p[g][t]*lam;
+            e.ucOn=s.u[g][t];//启停状态与技术出力区间
+            e.ucPMin=m.pMin;
+            e.ucPMax=m.pMax;
             out.genDetails.append(e);
         }
-
-        // 购电侧：按申报量占比分摊（与二次模式同式）
-        double conSum = 0.0;
-        for (const auto &c : market.consumerBids) {
-            if (c.period == period || c.period <= 0)
-                conSum += c.quantity;
+        //购电侧明细
+        double conSum=0.0;
+        for(const auto&c:market.consumerBids)
+        {
+            if(c.period==period||c.period<=0)
+                conSum+=c.quantity;
         }
-        if (conSum > 0.0) {
-            for (const auto &c : market.consumerBids) {
-                if (!(c.period == period || c.period <= 0))
+        if(conSum>0.0)
+        {
+            for(const auto&c:market.consumerBids)
+            {
+                if(!(c.period==period||c.period<=0))
                     continue;
                 EntityCleared e;
-                e.id = c.id;
-                e.name = c.name;
-                e.segment = c.segment;
-                e.bidPrice = lam;              // 统一出清价结算
-                e.clearedMW = loadOf[t] * (c.quantity / conSum);
-                e.money = e.clearedMW * lam;
+                e.id=c.id;
+                e.name=c.name;
+                e.segment=c.segment;
+                e.bidPrice=lam;//统一出清价结算
+                e.clearedMW=loadOf[t]*(c.quantity/conSum);
+                e.money=e.clearedMW*lam;
                 out.conDetails.append(e);
             }
         }
-
-        for (const auto &e : out.genDetails)
-            out.genFee += e.money;
-        for (const auto &e : out.conDetails)
-            out.conFee += e.money;
-
+        for(const auto&e:out.genDetails)
+            out.genFee+=e.money;
+        for(const auto&e:out.conDetails)
+            out.conFee+=e.money;
         raw.append(out);
     }
-
-    // UC 汇总 KPI：启动次数 / 启动成本（初始状态 = 全部开机，故 t=0 不计启动）
-    for (int g = 0; g < market.generatorMeta.size(); ++g) {
-        for (int t = 1; t < 96; ++t) {
-            if (s.u[g][t] == 1 && s.u[g][t - 1] == 0) {
-                result.startupCount += 1;
-                result.startupCostTotal += market.generatorMeta[g].startupCost;
+    //UC汇总，启动次数/启动成本（初始状态=全部开机，t=0不计启动）
+    for(int g=0;g<market.generatorMeta.size();++g)
+    {
+        for(int t=1;t<96;++t)
+        {
+            if(s.u[g][t]==1&&s.u[g][t-1]==0)
+            {
+                result.startupCount+=1;
+                result.startupCostTotal+=market.generatorMeta[g].startupCost;
             }
         }
-        for (int t = 0; t < 96; ++t)
-            result.noLoadCostTotal += market.generatorMeta[g].noLoadCost * s.u[g][t];
+        for(int t=0;t<96;++t)
+            result.noLoadCostTotal+=market.generatorMeta[g].noLoadCost*s.u[g][t];
     }
-    result.totalCost = s.totalCost;
-
-    // UC 机组启停/出力计划穿透（P3 状态列 / P4 甘特图 / P5 启停计划导出）
+    result.totalCost=s.totalCost;
+    //UC机组启停/出力计划用于P3状态列/P4甘特图/P5启停计划导出）
     result.ucUnitNames.clear();
     result.ucUnitStartupCost.clear();
     result.ucUnitOn.clear();
     result.ucUnitP.clear();
-    for (int g = 0; g < market.generatorMeta.size(); ++g) {
-        const auto &m = market.generatorMeta[g];
-        result.ucUnitNames.append(
-            QStringLiteral("%1 %2").arg(m.name, m.id));
+    for(int g=0;g<market.generatorMeta.size();++g)
+    {
+        const auto&m=market.generatorMeta[g];
+        result.ucUnitNames.append(QStringLiteral("%1 %2").arg(m.name,m.id));
         result.ucUnitStartupCost.append(m.startupCost);
         result.ucUnitOn.append(s.u[g]);
         result.ucUnitP.append(s.p[g]);
     }
-
-    // 稀缺提示：需求超出可开机容量的时段由失负荷松弛放行、λ 封顶 1500
-    // （V1.3.1 同口径）；最大缺口写进数据源描述，P2/P3 可见
-    double maxShed = 0.0;
-    for (double v : s.shed)
-        maxShed = std::max(maxShed, v);
-    if (maxShed > 0.5)
+    //需求超出可开机容量的时段由失负荷松弛放行、λ封顶1500
+    double maxShed=0.0;
+    for(double v:s.shed)maxShed=std::max(maxShed,v);
+    if(maxShed>0.5)
         result.sourceName += QStringLiteral(" · 峰时段缺供 %1 MW（稀缺出清价 1500）")
-                                 .arg(maxShed, 0, 'f', 1);
-
-    // 24 期聚合（口径与 clearPeriods / clearPeriodsQuadratic 完全一致）
-    if (periodCount == 24) {
-        for (int hour = 1; hour <= 24; ++hour) {
+                                 .arg(maxShed,0,'f',1);
+    //96归为24
+    if(periodCount==24)
+    {
+        for(int hour=1;hour<=24;++hour)
+        {
             PeriodResult agg;
-            agg.period = hour;
-            agg.time = periodTime(hour, 24);
-
-            int peakIdx = -1;
-            double priceSum = 0.0, loadSum = 0.0, renewSum = 0.0, volSum = 0.0;
-            for (int q = 0; q < 4; ++q) {
-                const PeriodResult &pr = raw[(hour - 1) * 4 + q];
-                priceSum += pr.clearingPrice;
-                loadSum += pr.loadMW;
-                renewSum += pr.renewMW;
-                volSum += pr.clearedMW;
-                agg.genFee += pr.genFee;
-                agg.conFee += pr.conFee;
-                if (peakIdx < 0 || pr.clearingPrice > raw[(hour - 1) * 4 + peakIdx].clearingPrice)
-                    peakIdx = q;
+            agg.period=hour;
+            agg.time=periodTime(hour,24);
+            int peakIdx=-1;
+            double priceSum=0.0,loadSum=0.0,renewSum=0.0,volSum=0.0;
+            for(int q=0;q<4;++q)
+            {
+                const PeriodResult&pr=raw[(hour-1)*4+q];
+                priceSum+=pr.clearingPrice;
+                loadSum+=pr.loadMW;
+                renewSum+=pr.renewMW;
+                volSum+=pr.clearedMW;
+                agg.genFee+=pr.genFee;
+                agg.conFee+=pr.conFee;
+                if(peakIdx<0||pr.clearingPrice>raw[(hour-1)*4+peakIdx].clearingPrice)
+                    peakIdx=q;
             }
-            agg.clearingPrice = priceSum / 4.0;
-            agg.loadMW = loadSum / 4.0;
-            agg.renewMW = renewSum / 4.0;
-            agg.clearedMW = volSum / 4.0;
-            agg.genDetails = raw[(hour - 1) * 4 + peakIdx].genDetails;
-            agg.conDetails = raw[(hour - 1) * 4 + peakIdx].conDetails;
+            agg.clearingPrice=priceSum/4.0;
+            agg.loadMW=loadSum/4.0;
+            agg.renewMW=renewSum/4.0;
+            agg.clearedMW=volSum/4.0;
+            agg.genDetails=raw[(hour-1)*4+peakIdx].genDetails;
+            agg.conDetails=raw[(hour-1)*4+peakIdx].conDetails;
             result.periods.append(agg);
         }
-    } else {
-        result.periods = raw;
+    }
+    else
+    {
+        result.periods=raw;
     }
     return result;
 }
