@@ -79,9 +79,9 @@ void testAnalytic()
 
     check(r.ok, QStringLiteral("① 可行性标志"));
     check(std::abs(r.clearingPrice - 110.0) < 1e-3,
-          QStringLiteral("① 出清价 = 解析解 110（%.6f）").arg(r.clearingPrice));
+          QStringLiteral("① 出清价 = 解析解 110（%1）").arg(r.clearingPrice,0,'f',6));
     check(std::abs(r.totalVolume - D) < 1e-2,
-          QStringLiteral("① 总量平衡（%.6f vs %.6f）").arg(r.totalVolume).arg(D));
+          QStringLiteral("① 总量平衡（%1 vs %2）").arg(r.totalVolume,0,'f',6).arg(D,0,'f',6));
     check(std::abs(r.shortfall) < 1e-9, QStringLiteral("① 无供给缺口"));
 
     // 未顶格机组（G1/G2）的边际成本 = 统一出清价；G3 顶格机组 MC=72 例外
@@ -108,7 +108,7 @@ void testCapAtPMax()
 
     check(r.ok, QStringLiteral("② 可行性标志"));
     check(std::abs(r.clearingPrice - 202.0) < 1e-2,
-          QStringLiteral("② 出清价（%.4f vs 202）").arg(r.clearingPrice));
+          QStringLiteral("② 出清价（%1 vs 202）").arg(r.clearingPrice,0,'f',4));
     bool dearPartial = false, cheapCapped = false;
     for (const auto &d : r.dispatch) {
         if (d.id == QStringLiteral("GD"))
@@ -132,7 +132,7 @@ void testZeroOutput()
 
     check(r.ok, QStringLiteral("③ 可行性标志"));
     check(r.clearingPrice >= 72.0 - 1e-6 && r.clearingPrice <= 80.0 + 1e-3,
-          QStringLiteral("③ 出清价落于平坦段 [72,80]（%.4f）").arg(r.clearingPrice));
+          QStringLiteral("③ 出清价落于平坦段 [72,80]（%1）").arg(r.clearingPrice,0,'f',4));
     for (const auto &d : r.dispatch) {
         if (d.id == QStringLiteral("G1"))
             check(d.output < 1e-6, QStringLiteral("③ G1 恰好零出力"));
@@ -153,7 +153,7 @@ void testZeroQuadraticCoefficient()
 
     check(r.ok, QStringLiteral("④ a=0 不崩溃且可行"));
     check(std::abs(r.clearingPrice - 90.0) < 1e-2,
-          QStringLiteral("④ 出清价（%.4f vs 90）").arg(r.clearingPrice));
+          QStringLiteral("④ 出清价（%1 vs 90）").arg(r.clearingPrice,0,'f',4));
     for (const auto &d : r.dispatch) {
         if (d.id == QStringLiteral("GS")) {
             check(std::abs(d.output - 200.0) < 1e-6,
@@ -164,7 +164,24 @@ void testZeroQuadraticCoefficient()
     }
 }
 
-// ⑤ 需求超容量：稀缺封顶（衔接 V1.3.1）
+// 阶梯供给的需求落在跳跃区间时，边际机组必须允许部分中标。
+void testPartialStepDispatch()
+{
+    const QVector<QuadraticGenerator> gens = {
+        makeGen(QStringLiteral("GS"), 0.0, 90.0, 200.0, 200.0)
+    };
+    const QuadraticClearResult r = quadraticClearing(gens, 50.0);
+
+    check(r.ok, QStringLiteral("⑤ 阶梯机组可部分中标"));
+    check(std::abs(r.clearingPrice - 90.0) < 1e-6,
+          QStringLiteral("⑤ 阶梯机组部分中标价 = 90"));
+    check(r.dispatch.size() == 1 && std::abs(r.dispatch.first().output - 50.0) < 1e-6,
+          QStringLiteral("⑤ 阶梯机组部分出力 = 50"));
+    check(std::abs(r.totalVolume - 50.0) < 1e-6,
+          QStringLiteral("⑤ 阶梯机组部分成交量守恒"));
+}
+
+// ⑥ 需求超容量：稀缺封顶（衔接 V1.3.1）
 void testScarcityCap()
 {
     const QVector<QuadraticGenerator> gens = referenceGens();
@@ -173,9 +190,9 @@ void testScarcityCap()
 
     check(r.ok, QStringLiteral("⑤ 稀缺时仍返回可行结果"));
     check(std::abs(r.shortfall - 150.0) < 1e-6,
-          QStringLiteral("⑤ 缺口 = 150（%.4f）").arg(r.shortfall));
+          QStringLiteral("⑤ 缺口 = 150（%1）").arg(r.shortfall,0,'f',4));
     check(std::abs(r.clearingPrice - 121.0) < 1e-6,
-          QStringLiteral("⑤ 出清价封顶 = 最高边际成本 121（%.4f）").arg(r.clearingPrice));
+          QStringLiteral("⑤ 出清价封顶 = 最高边际成本 121（%1）").arg(r.clearingPrice,0,'f',4));
     bool allCapped = true;
     for (const auto &d : r.dispatch)
         allCapped = allCapped && d.output > 0.0;
@@ -201,6 +218,7 @@ int main(int argc, char *argv[])
     testCapAtPMax();
     testZeroOutput();
     testZeroQuadraticCoefficient();
+    testPartialStepDispatch();
     testScarcityCap();
     testFacadeGuard();
 

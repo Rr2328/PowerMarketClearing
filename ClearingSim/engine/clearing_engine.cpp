@@ -34,9 +34,18 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
         if(generators[gindex].capacity<=EPS)gindex++;
         if(consumers[cindex].demand<=EPS)cindex++;
     }
+    // 只把仍愿意按最后成交供给价购买的剩余需求视为物理缺口。
+    // 更低报价的需求是正常未中标，不能把价格错误推到稀缺上限。
     double residualDemand=0.0;
-    for (const Consumer&c:consumers)
-        residualDemand+=c.demand;
+    if(gindex>=generators.size())
+    {
+        for(int i=cindex;i<consumers.size();++i)
+        {
+            if(consumers[i].price+EPS<lastprice)
+                break;
+            residualDemand+=consumers[i].demand;
+        }
+    }
     constexpr double kDemandTol=0.5;    // MW
     constexpr double kPriceCap=1500.0;  // 总则规则④：双侧统一限价（V1.3.1 稀缺封顶口径）
     if(gindex>=generators.size()&&residualDemand>kDemandTol)

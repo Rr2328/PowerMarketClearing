@@ -491,7 +491,7 @@ QWidget *MainWindow::buildImportPage()
         auto *title = new QLabel(QStringLiteral("校验规则"), ruleCard);
         title->setObjectName("ruleCardTitle");
         auto *text = new QLabel(
-            QStringLiteral("段数 ≤ 5 · 报价单调递增 · 电价 0~1500 元/MWh · 电量 ≥ 0 · 跨文件主体名称一致"),
+            QStringLiteral("段数 ≤ 10 · 报价单调递增 · 电价 0~1500 元/MWh · 电量 ≥ 0 · 跨文件主体名称一致"),
             ruleCard);
         text->setObjectName("ruleCardText");
         text->setWordWrap(true);
@@ -2532,7 +2532,7 @@ void MainWindow::refreshResultPage()
                     m_resultTable->setItem(r, 3, new QTableWidgetItem(
                                                    QStringLiteral("%1").arg(e.bidPrice, 0, 'f', 1)));
                     m_resultTable->setItem(r, 4, new QTableWidgetItem(
-                                                   QStringLiteral("%1").arg(e.clearedMW, 0, 'f', 1)));
+                                                   QStringLiteral("%1").arg(e.clearedMW * dh, 0, 'f', 1)));
                     m_resultTable->setItem(r, 5, new QTableWidgetItem(
                                                    QStringLiteral("%1").arg(e.money, 0, 'f', 1)));
                 }
@@ -2850,9 +2850,10 @@ void MainWindow::refreshExportPage()
     double sum = 0.0, mx = -std::numeric_limits<double>::max(),
            mn = std::numeric_limits<double>::max(), volSum = 0.0;
     double fee = 0.0;
+    const double dh = (periods.size() == 96) ? 0.25 : 1.0;
     for (const auto &pr : periods) {
         sum += pr.clearingPrice;
-        volSum += pr.clearedMW;
+        volSum += pr.clearedMW * dh;
         fee += (p == Perspective::Gen) ? pr.genFee
              : (p == Perspective::Con) ? pr.conFee
                                        : (pr.genFee + pr.conFee);
@@ -3028,6 +3029,7 @@ void MainWindow::onExportDaily()
 
     const auto &periods = m_session.result.periods;
     const Perspective p = m_session.perspective;
+    const double dh = (periods.size() == 96) ? 0.25 : 1.0;
 
     if (p == Perspective::Platform) {
         // 逐时段全局日报（负荷概念已退场：总需求 = 购电申报总量，新能源 = 滑块直给）
@@ -3037,10 +3039,10 @@ void MainWindow::onExportDaily()
             const double fee = pr.genFee + pr.conFee;
             out << pr.time << ',' << QString::number(pr.clearingPrice, 'f', 1) << ','
                 << QString::number(pr.loadMW, 'f', 1) << ','
-                << QString::number(pr.clearedMW, 'f', 1) << ','
+                << QString::number(pr.clearedMW * dh, 'f', 1) << ','
                 << QString::number(pr.renewMW, 'f', 1) << ','
                 << QString::number(pr.clearedMW - pr.renewMW, 'f', 1) << '\n';
-            volSum += pr.clearedMW;
+            volSum += pr.clearedMW * dh;
             feeSum += fee;
             priceSum += pr.clearingPrice;
         }
@@ -3076,10 +3078,10 @@ void MainWindow::onExportDaily()
                 } else {
                     out << pr.time << ',' << e.name << ',' << e.segment << ','
                         << QString::number(e.bidPrice, 'f', 1) << ','
-                        << QString::number(e.clearedMW, 'f', 1) << ','
+                        << QString::number(e.clearedMW * dh, 'f', 1) << ','
                         << QString::number(e.money, 'f', 1) << '\n';
                 }
-                volSum += e.clearedMW;
+                volSum += e.clearedMW * dh;
                 moneySum += e.money;
             }
         }
@@ -3192,10 +3194,20 @@ void MainWindow::onExportCurve()
     //   （同参数同模式，结果与界面显示口径自洽）
     const QString mode = m_session.result.mode.isEmpty()
                              ? QStringLiteral("MCP") : m_session.result.mode;
-    const ClearingResult native = ClearingFacade::clearPeriods(
-        m_session.market, 96, m_session.renewPercent / 100.0, mode);
+    ClearingResult native;
+    if (mode == QStringLiteral("UC")) {
+        native = ClearingFacade::clearPeriodsUc(
+            m_session.market, 96, m_session.renewPercent / 100.0);
+    } else if (mode == QStringLiteral("QUAD")) {
+        native = ClearingFacade::clearPeriodsQuadratic(
+            m_session.market, 96, m_session.renewPercent / 100.0);
+    } else {
+        native = ClearingFacade::clearPeriods(
+            m_session.market, 96, m_session.renewPercent / 100.0, mode);
+    }
     const auto &rows = native.periods.isEmpty()
                            ? m_session.result.periods : native.periods;
+    const double rowHours = (rows.size() == 96) ? 0.25 : 1.0;
 
     QFile f(path);
     if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -3211,7 +3223,7 @@ void MainWindow::onExportCurve()
             << QString::number(pr.renewMW, 'f', 1) << ','
             << QString::number(pr.clearedMW - pr.renewMW, 'f', 1) << ','
             << QString::number(pr.clearingPrice, 'f', 1) << ','
-            << QString::number(pr.clearedMW, 'f', 1) << '\n';
+            << QString::number(pr.clearedMW * rowHours, 'f', 1) << '\n';
     }
     f.close();
 

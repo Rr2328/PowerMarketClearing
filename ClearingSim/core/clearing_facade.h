@@ -10,7 +10,7 @@ struct EntityCleared
     QString name;
     int segment=0;
     double bidPrice=0.0;//该段申报价
-    double clearedMW=0.0;//出清电量
+    double clearedMW=0.0;//该时段中标功率（MW）
     double money=0.0;//收入/费用
     //UC模式（SCUC）专用
     int ucOn=-1;//启停状态0/1（-1=非UC模式）
@@ -25,7 +25,7 @@ struct PeriodResult
     double loadMW=0.0;//该时段总需求
     double renewMW=0.0;//该时段新能源实际消纳量
     double clearingPrice=0.0;//该时段出清价
-    double clearedMW=0.0;//该时段总成交电量
+    double clearedMW=0.0;//该时段总成交功率（MW）
     double genFee=0.0;//发电侧结算总额
     double conFee=0.0; //购电侧结算总额
     QVector<EntityCleared>genDetails;
@@ -71,7 +71,8 @@ private:
     //单个时段的出清核心
     static PeriodResult clearOne(const MarketData&market, int period,
                                  const QString&time, double demandMW, double renewMW,
-                                 double scale, const QString&mode);
+                                 double scale, double durationHours,
+                                 const QString&mode);
     //时段转化成时间
     static QString periodTime(int period, int periodCount);
 };

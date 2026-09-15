@@ -217,9 +217,8 @@ endif()
 #   导致 ctest / IDE Test Explorer 拿不到；这里 enable_testing + add_test 接上
 #   标准测试框架。
 #
-# Windows 下 Qt 测试程序须在 PATH 含 Qt DLL 才能独立启动——CI 上需要 windeployqt
-#   拷贝，或在 add_test 里设 ENVIRONMENT 把 Qt bin 加进去。这里开发期主要靠
-#   PATH 前置 + QT_FORCE_STDERR_LOGGING=1 环境变量。
+# Windows 下 Qt/MinGW 测试程序须在 PATH 含对应运行库才能独立启动。
+#   下方为每个测试显式补齐路径，避免 ctest / IDE Test Explorer 报 0xc0000135。
 
 enable_testing()
 
@@ -291,14 +290,32 @@ target_link_libraries(UcSolverTest
 
 add_test(NAME UcSolverTest COMMAND UcSolverTest)
 
-# 让 Windows 控制台输出也走 stderr（IDE/Test Explorer 看得到）
-set_tests_properties(
+# 让 Windows 控制台输出也走 stderr（IDE/Test Explorer 看得到）。
+# ENVIRONMENT_MODIFICATION 从 CMake 3.22 起可用；旧版仍可配置项目，
+# 但需由调用者自行把 Qt/编译器 bin 放入 PATH。
+set(_clearing_test_targets
     DataReaderTest
     ScenarioManagerTest
     ClearingFacadeTest
     DataPipelineIntegrationTest
     MarketDataIntegrationTest
     QuadraticClearingTest
+    HighsHelloTest
+    UcSolverTest
+)
+set_tests_properties(
+    ${_clearing_test_targets}
     PROPERTIES
     ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1"
 )
+if(WIN32 AND CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+    get_filename_component(_qt_runtime_dir "${Qt6_DIR}/../../.." ABSOLUTE)
+    set(_qt_runtime_dir "${_qt_runtime_dir}/bin")
+    get_filename_component(_compiler_runtime_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    set_tests_properties(
+        ${_clearing_test_targets}
+        PROPERTIES
+        ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${_qt_runtime_dir};PATH=path_list_prepend:${_compiler_runtime_dir}"
+    )
+endif()

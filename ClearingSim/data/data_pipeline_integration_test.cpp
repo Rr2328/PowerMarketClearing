@@ -317,7 +317,7 @@ void testBenchmarkNarrowTableEndToEnd(const QString &repoRoot)
     const auto dayResult = ClearingFacade::clearPeriods(
         market, 96, 0.0, QStringLiteral("MCP"));
 
-    // 96 期逐时段结果 = 250 元 / 50 MWh / 12500 元（窄表等价性对拍）
+    // 96 期逐时段结果 = 250 元/MWh / 50 MW；每期 15 分钟 = 12.5 MWh
     int matchCount = 0;
     for (const auto &pr : dayResult.periods) {
         if (std::fabs(pr.clearingPrice - 250.0) < 0.5
@@ -327,17 +327,17 @@ void testBenchmarkNarrowTableEndToEnd(const QString &repoRoot)
     check(matchCount == 96,
           QStringLiteral("benchmark 96 期 = 250/50 锚点（实际命中=%1）").arg(matchCount));
 
-    // 全天单边费用 = 1200000 元（genFee = conFee = 250元 × 50 MWh × 96 期）
+    // 全天单边费用 = 300000 元（250 元/MWh × 50 MW × 0.25 h × 96 期）
     //   MCP 模式下发电侧与购电侧都按出清价结算（B 位 settle 等价）
     double genFeeSum = 0.0, conFeeSum = 0.0;
     for (const auto &pr : dayResult.periods) {
         genFeeSum += pr.genFee;
         conFeeSum += pr.conFee;
     }
-    checkClose(genFeeSum, 1200000.0, 1.0,
-               QStringLiteral("benchmark 发电侧全天费用 ≈ 1200000 元（250×50×96）"));
-    checkClose(conFeeSum, 1200000.0, 1.0,
-               QStringLiteral("benchmark 购电侧全天费用 ≈ 1200000 元（250×50×96）"));
+    checkClose(genFeeSum, 300000.0, 1.0,
+               QStringLiteral("benchmark 发电侧全天费用 ≈ 300000 元（250×50×0.25×96）"));
+    checkClose(conFeeSum, 300000.0, 1.0,
+               QStringLiteral("benchmark 购电侧全天费用 ≈ 300000 元（250×50×0.25×96）"));
 }
 
 // ============================================================
