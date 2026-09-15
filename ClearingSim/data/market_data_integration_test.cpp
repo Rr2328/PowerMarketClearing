@@ -1,62 +1,60 @@
 #include "data_reader.h"
 #include "scenario_manager.h"
+
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QSet>
+
 #include <cmath>
+
 // MarketData 集成测试 V1.3：校验 CSV → MarketData → PeriodScenario 全链路数据流转。
 namespace
 {
+
 // 失败用例计数（全局变量，由 check 累加）。
 int failedTests = 0;
+
 // 断言并打印结果，失败时累加失败数。
 void check(bool condition,const QString &testName)
-{
-    if (condition)
-    {
-        qInfo().noquote()<< "[PASS]"<< testName;
+{if (condition)
+    {qInfo().noquote()<< "[PASS]"<< testName;
     }
     else
-    {
-        qCritical().noquote()<< "[FAIL]"<< testName;
+    {qCritical().noquote()<< "[FAIL]"<< testName;
         ++failedTests;
     }
 }
+
 // 自指定路径上溯查找仓库根目录。
 QString searchRepoRoot(const QString &startPath)
-{
-    QDir dir(startPath);
+{QDir dir(startPath);
     while (true)
-    {
-        if (dir.exists("ClearingSim") &&dir.exists("data/samples/scenario"))
-        {
-            return dir.absolutePath();
+    {if (dir.exists("ClearingSim") &&dir.exists("data/samples/scenario"))
+        {return dir.absolutePath();
         }
         if (!dir.cdUp())
-        {
-            break;
+        {break;
         }
     }
     return QString();
 }
+
 // 依次从程序目录、工作目录、源码目录尝试定位仓库根目录。
 QString findRepoRoot()
-{
-    QString root =searchRepoRoot(QCoreApplication::applicationDirPath());
+{QString root =searchRepoRoot(QCoreApplication::applicationDirPath());
     if (!root.isEmpty())
-    {
-        return root;
+    {return root;
     }
     root =searchRepoRoot(QDir::currentPath());
     if (!root.isEmpty())
-    {
-        return root;
+    {return root;
     }
     const QFileInfo sourceFile(QString::fromUtf8(__FILE__));
     return searchRepoRoot(sourceFile.absolutePath());
 }
+
 // 按时段数生成一组四文件路径。
 DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 {
@@ -75,15 +73,12 @@ DataFileSet makeFileSet(const QString &scenarioDir,int periodCount)
 //   负荷用 ScenarioManager 的 96→24 聚合；发电/购电申报按
 //   (t-1)/4+1 映射到小时，量与价取 4 期均值，主体身份 = (name,id)。
 bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &errors)
-{
-    dst =MarketData();
+{dst =MarketData();
     if (!ScenarioManager::aggregateLoadTo24(src.loadCurve,dst.loadCurve,errors))
-    {
-        return false;
+    {return false;
     }
     struct HourBid
-    {
-        QString name;
+    {QString name;
         QString id;
         int period =0;
         double price =0.0;
@@ -92,25 +87,20 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
     };
     QVector<HourBid> genAcc;
     for (const GeneratorBid &bid :src.generatorBids)
-    {
-        if (bid.period <1 ||bid.period >96)
-        {
-            errors.append(QString("发电申报出现非法时段 %1").arg(bid.period));
+    {if (bid.period <1 ||bid.period >96)
+        {errors.append(QString("发电申报出现非法时段 %1").arg(bid.period));
             return false;
         }
         const int hour =(bid.period -1)/4 +1;
         HourBid *acc =nullptr;
         for (HourBid &item :genAcc)
-        {
-            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
-            {
-                acc =&item;
+        {if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {acc =&item;
                 break;
             }
         }
         if (!acc)
-        {
-            HourBid fresh;
+        {HourBid fresh;
             fresh.name =bid.name;
             fresh.id =bid.id;
             fresh.period =hour;
@@ -122,8 +112,7 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
         ++acc->count;
     }
     for (const HourBid &item :genAcc)
-    {
-        GeneratorBid bid;
+    {GeneratorBid bid;
         bid.name =item.name;
         bid.id =item.id;
         bid.period =item.period;
@@ -133,25 +122,20 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
     }
     QVector<HourBid> conAcc;
     for (const ConsumerBid &bid :src.consumerBids)
-    {
-        if (bid.period <1 ||bid.period >96)
-        {
-            errors.append(QString("购电申报出现非法时段 %1").arg(bid.period));
+    {if (bid.period <1 ||bid.period >96)
+        {errors.append(QString("购电申报出现非法时段 %1").arg(bid.period));
             return false;
         }
         const int hour =(bid.period -1)/4 +1;
         HourBid *acc =nullptr;
         for (HourBid &item :conAcc)
-        {
-            if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
-            {
-                acc =&item;
+        {if (item.name ==bid.name &&item.id ==bid.id &&item.period ==hour)
+            {acc =&item;
                 break;
             }
         }
         if (!acc)
-        {
-            HourBid fresh;
+        {HourBid fresh;
             fresh.name =bid.name;
             fresh.id =bid.id;
             fresh.period =hour;
@@ -163,8 +147,7 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
         ++acc->count;
     }
     for (const HourBid &item :conAcc)
-    {
-        ConsumerBid bid;
+    {ConsumerBid bid;
         bid.name =item.name;
         bid.id =item.id;
         bid.period =item.period;
@@ -174,48 +157,44 @@ bool aggregateMarketDataTo24(const MarketData &src,MarketData &dst,QStringList &
     }
     return true;
 }
+
 // 输出错误明细。
 void printErrors(const QStringList &errors)
-{
-    for (const QString &error : errors)
-    {
-        qInfo().noquote()<< "   "<< error;
+{for (const QString &error : errors)
+    {qInfo().noquote()<< "   "<< error;
     }
 }
+
 // 提取发电侧机组 ID 集合。
 QSet<QString> generatorIds(const QVector<GeneratorBid> &data)
-{
-    QSet<QString> ids;
+{QSet<QString> ids;
     for (const GeneratorBid &bid : data)
-    {
-        ids.insert(bid.id);
+    {ids.insert(bid.id);
     }
     return ids;
 }
+
 // 提取用户侧用户 ID 集合。
 QSet<QString> consumerIds(const QVector<ConsumerBid> &data)
-{
-    QSet<QString> ids;
+{QSet<QString> ids;
     for (const ConsumerBid &bid : data)
-    {
-        ids.insert(bid.id);
+    {ids.insert(bid.id);
     }
     return ids;
 }
+
 // 校验单时段场景的负荷与 MarketData 负荷曲线一致（V1.3.5：场景仅承载负荷口径）。
 bool scenarioMatchesMarketData(const PeriodScenario &scenario,const MarketData &data)
-{
-    if (scenario.period <1 ||scenario.period >data.loadCurve.size())
-    {
-        return false;
+{if (scenario.period <1 ||scenario.period >data.loadCurve.size())
+    {return false;
     }
     return std::abs(scenario.loadMW -data.loadCurve.at(scenario.period -1).load) <1e-6;
 }
+
 // 跑通「MarketData → PeriodScenario」链路测试（数据由调用方准备：
 //   96 期为 V1.3 原生长表；24 期为聚合合成视图，见 aggregateMarketDataTo24）。
 bool pipelineFromData(const MarketData &data,int periodCount)
-{
-    qInfo().noquote()<< "-----"<< periodCount<< "period pipeline -----";
+{qInfo().noquote()<< "-----"<< periodCount<< "period pipeline -----";
     QStringList errors;
     bool ok =false;
     check(data.loadCurve.size() ==periodCount,QString("%1 时段负荷数量正确").arg(periodCount));
@@ -228,14 +207,12 @@ bool pipelineFromData(const MarketData &data,int periodCount)
     ok =ScenarioManager::buildPeriodScenarios(data,periodCount,scenarios,errors);
     check(ok,QString("%1 时段 MarketData → PeriodScenario").arg(periodCount));
     if (!ok)
-    {
-        printErrors(errors);
+    {printErrors(errors);
         return false;
     }
     check(scenarios.size() ==periodCount,QString("%1 时段场景数量正确").arg(periodCount));
     if (!scenarios.isEmpty())
-    {
-        const PeriodScenario &first =scenarios.first();
+    {const PeriodScenario &first =scenarios.first();
         const PeriodScenario &last =scenarios.last();
         check(first.period == 1 &&last.period == periodCount,QString("%1 时段场景编号完整").arg(periodCount));
         check(scenarioMatchesMarketData(first,data),QString("%1 时段第1场景负荷与 MarketData 一致").arg(periodCount));
@@ -247,25 +224,24 @@ bool pipelineFromData(const MarketData &data,int periodCount)
     check(copiedData.generatorBids.size() ==data.generatorBids.size() &&copiedData.consumerBids.size() ==data.consumerBids.size() &&copiedData.loadCurve.size() ==data.loadCurve.size(),QString("%1 时段 MarketData 可完整复制").arg(periodCount));
     return true;
 }
+
 } // namespace
+
 int main(int argc,char *argv[])
-{
-    QCoreApplication app(argc,argv);
+{QCoreApplication app(argc,argv);
     qInfo().noquote()<< "========== MarketData Integration V1.3 Test ==========";
     // 定位仓库根目录，失败则直接终止。
     const QString repoRoot =findRepoRoot();
     check(!repoRoot.isEmpty(),"定位仓库根目录");
     if (repoRoot.isEmpty())
-    {
-        return 1;
+    {return 1;
     }
     qInfo().noquote()<< "Repository root:"<< QDir::toNativeSeparators(repoRoot);
     // 定位 scenario 场景数据目录，不存在则终止。
     const QString scenarioDir =QDir(repoRoot).filePath("data/samples/scenario");
     check(QDir(scenarioDir).exists(),"定位 scenario 场景目录");
     if (!QDir(scenarioDir).exists())
-    {
-        return 1;
+    {return 1;
     }
     // 96 期原生链路（V1.3 长表：CSV → DataReader → 场景）。
     MarketData data96;
@@ -273,35 +249,29 @@ int main(int argc,char *argv[])
     bool ok =DataReader::readAll(makeFileSet(scenarioDir,96),data96,errors);
     check(ok,"96 时段 CSV → MarketData");
     if (ok)
-    {
-        ok =pipelineFromData(data96,96);
+    {ok =pipelineFromData(data96,96);
     }
     else
-    {
-        printErrors(errors);
+    {printErrors(errors);
     }
     // 24 时段视图链路：由 96 期聚合合成（V1.3 契约 §7.2，合并适配：
     //   原实现读取 24 时段原生样例，该路径已随 V1.3 契约移除）。
     if (ok)
-    {
-        MarketData data24;
+    {MarketData data24;
         errors.clear();
         ok =aggregateMarketDataTo24(data96,data24,errors);
         check(ok,"96 → 24 聚合合成 24 时段视图");
         if (ok)
-        {
-            ok =pipelineFromData(data24,24);
+        {ok =pipelineFromData(data24,24);
         }
         else
-        {
-            printErrors(errors);
+        {printErrors(errors);
         }
     }
     // 输出汇总，失败数决定退出码。
     qInfo().noquote()<< "===============================================";
     if (failedTests == 0)
-    {
-        qInfo().noquote()<< "All MarketData Integration V1.3 tests passed.";
+    {qInfo().noquote()<< "All MarketData Integration V1.3 tests passed.";
         return 0;
     }
     qCritical().noquote()<< failedTests<< "test(s) failed.";

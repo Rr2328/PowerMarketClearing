@@ -116,7 +116,7 @@ MainWindow::MainWindow(QWidget *parent)
     });
     navCol->addWidget(m_nav);
 
-    auto *navFooter = new QLabel(QStringLiteral("V 1.3.5"));
+    auto *navFooter = new QLabel(QStringLiteral("V 1.3.6"));
     navFooter->setObjectName("navFooter");
     navCol->addSpacing(6);
     navCol->addWidget(navFooter);
@@ -259,7 +259,7 @@ QWidget *MainWindow::buildCoverPage()
     auto *brandText = new QLabel(QStringLiteral("SEU · 电力市场课程设计"), page);
     brandText->setObjectName("coverBrandText");
 
-    auto *version = new QLabel(QStringLiteral("V 1.3.5"), page);
+    auto *version = new QLabel(QStringLiteral("V 1.3.6"), page);
     version->setObjectName("coverVersion");
     version->setAlignment(Qt::AlignCenter);
 
@@ -635,6 +635,18 @@ QWidget *MainWindow::buildControlPage()
     // 出清机制切换：SCUC 依赖 generator_meta.csv，缺失则回弹并提示；
     //   切换即时重算（与渗透率滑块行为一致）
     auto applyUcMode = [this](bool wantUc) {
+        if (wantUc && m_session.quadraticMode) {
+            // 二次成本曲线 × SCUC 互斥（V1.3.6）：SCUC 求解器仅接受分段线性申报，
+            //   二次参数 (a,b,c) 无法进入 MILP——拒绝切换并回弹（正常情况下卡片已禁用，
+            //   此分支兜底信号泄漏路径）
+            QSignalBlocker blockUc(m_btnEngineUc);
+            QSignalBlocker blockMkt(m_btnEngineMkt);
+            m_btnEngineUc->setChecked(false);
+            m_btnEngineMkt->setChecked(true);
+            statusBar()->showMessage(
+                QStringLiteral("SCUC 求解器仅接受分段线性申报，与「二次成本曲线申报」不适用；如需 SCUC 请切换回多段量价申报"), 8000);
+            return;
+        }
         if (wantUc && m_session.market.generatorMeta.isEmpty()) {
             // 无机组参数表 → 拒绝切换并回弹（SCUC 依赖 generator_meta.csv）
             QSignalBlocker blockUc(m_btnEngineUc);
@@ -646,8 +658,7 @@ QWidget *MainWindow::buildControlPage()
             return;
         }
         m_session.ucMode = wantUc;
-        if (m_mcpRowWrap)
-            m_mcpRowWrap->setVisible(!wantUc); // SCUC 恒为统一出清价，MCP/PAB 无从谈起
+        updateModeCardStates();   // 统一维护：MCP/PAB 行 = 无 SCUC 且非二次形式时可见
         updateFileNamePreviews();
         // 已有结果时切换机制 → 即时按新机制重算（与渗透率滑块行为一致）
         if (m_session.hasResult && m_session.hasData)
@@ -668,6 +679,9 @@ QWidget *MainWindow::buildControlPage()
     connect(m_btnPab, &QPushButton::toggled, this, [this] {
         updateFileNamePreviews();
     });
+
+    // 初始互斥状态（二次模式 = false：SCUC 可用、MCP/PAB 可见）
+    updateModeCardStates();
     connect(m_granCombo, &QComboBox::currentIndexChanged, this, [this] {
         updateFileNamePreviews();
         if (m_paramSummary) {
@@ -1479,8 +1493,9 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
     m_session.hasData = true;
     m_session.quadraticMode = quadratic;   // 申报形式与数据绑定（导入时确定，V1.3.2）
 
-    // S4：UC 机制依赖 generator_meta.csv——新数据缺失时自动退回分段撮合并提示
-    if (m_session.ucMode && d.generatorMeta.isEmpty()) {
+    // V1.3.6：SCUC 与新数据的两类互斥——①新数据无 generator_meta.csv；
+    //   ②本次以二次成本曲线形式导入（求解器仅接受分段线性申报）→ 自动退回分段撮合
+    if (m_session.ucMode && (quadratic || d.generatorMeta.isEmpty())) {
         m_session.ucMode = false;
         if (m_btnEngineUc) {
             QSignalBlocker blockUc(m_btnEngineUc);
@@ -1490,11 +1505,12 @@ bool MainWindow::loadDataFiles(const QString &genFile, const QString &conFile,
             QSignalBlocker blockMkt(m_btnEngineMkt);
             m_btnEngineMkt->setChecked(true);
         }
-        if (m_mcpRowWrap)
-            m_mcpRowWrap->setVisible(true);
         statusBar()->showMessage(
-            QStringLiteral("新数据不含 generator_meta.csv，出清机制已退回「分段报价撮合」"), 8000);
+            quadratic
+                ? QStringLiteral("SCUC 不适用于二次成本曲线申报（求解器仅接受分段线性申报），出清机制已退回「分段报价撮合」")
+                : QStringLiteral("新数据不含 generator_meta.csv，出清机制已退回「分段报价撮合」"), 8000);
     }
+    updateModeCardStates();   // 互斥明示随导入结果刷新（SCUC 卡禁用/恢复、MCP/PAB 行显隐）
     m_session.resetResult();
     m_checkErrors.clear();
 
@@ -1521,6 +1537,24 @@ bool MainWindow::reloadCurrentSource()
                          m_formQuad && m_formQuad->isChecked());
 }
 
+// 模式互斥明示（V1.3.6）：集中维护机制卡/结算卡随申报形式、机制的可用性
+//   ① SCUC 卡：二次成本曲线形式下禁用——SCUC 求解器（HiGHS MILP）仅接受
+//      分段线性申报，二次参数 (a,b,c) 无法进入模型，组合会静默给出错误语义；
+//   ② MCP/PAB 结算行：SCUC 恒为统一出清价、二次出清恒为统一边际价，
+//      两种情形下 PAB 对比均无从谈起 → 隐藏（原仅 SCUC 隐藏，二次漏拦）。
+void MainWindow::updateModeCardStates()
+{
+    const bool quad = m_session.quadraticMode;
+    if (m_btnEngineUc) {
+        m_btnEngineUc->setEnabled(!quad);
+        m_btnEngineUc->setToolTip(quad
+            ? QStringLiteral("二次成本曲线形式下不可用：SCUC 求解器仅接受分段线性申报；如需 SCUC 请切换回「多段量价申报」")
+            : QStringLiteral("内含机组约束参数 generator_meta.csv"));
+    }
+    if (m_mcpRowWrap)
+        m_mcpRowWrap->setVisible(!quad && !m_session.ucMode);
+}
+
 // P1：申报形式切换（V1.3.2）——按新形式重载当前数据源；
 //   重载失败（如缺二次参数文件）时回退单选并保持原形式
 void MainWindow::onBidFormChanged()
@@ -1534,6 +1568,7 @@ void MainWindow::onBidFormChanged()
     if (!m_session.hasData) {
         // 未载入数据：仅记录形式，载入时生效
         m_session.quadraticMode = quad;
+        updateModeCardStates();          // 互斥明示随形式即时生效（SCUC 卡禁用/恢复）
         refreshImportPage();
         return;
     }
@@ -2900,6 +2935,27 @@ void MainWindow::onStartDemo()
                        QStringLiteral("内置基准例（对拍锚点 250/50/12500）")))
         return;
 
+    // V1.3.6：演示恒为「分段报价 · 对拍基准例」——同步申报形式/出清机制，
+    //   防止 P1 单选显示「二次」、机制卡亮着 SCUC 而结果实为分段对拍的错位
+    if (m_formStep && m_formQuad) {
+        QSignalBlocker b1(*m_formStep);
+        QSignalBlocker b2(*m_formQuad);
+        m_formStep->setChecked(true);
+        m_formQuad->setChecked(false);
+    }
+    if (m_session.ucMode) {
+        m_session.ucMode = false;
+        if (m_btnEngineUc) {
+            QSignalBlocker bu(*m_btnEngineUc);
+            m_btnEngineUc->setChecked(false);
+        }
+        if (m_btnEngineMkt) {
+            QSignalBlocker bm(*m_btnEngineMkt);
+            m_btnEngineMkt->setChecked(true);
+        }
+    }
+    updateModeCardStates();
+
     const QString mode = (m_btnPab && m_btnPab->isChecked())
                              ? QStringLiteral("PAB") : QStringLiteral("MCP");
     m_session.result = ClearingFacade::clearBenchmark(m_session.market, mode);
@@ -2910,7 +2966,7 @@ void MainWindow::onStartDemo()
     // 状态栏展示实际模式与真实结算金额（PAB 下发电收入应明显低于 MCP）
     const auto &pr = m_session.result.periods.first();
     statusBar()->showMessage(
-        QStringLiteral("一键演示完成：%1 模式 · 出清价 %2 元/MWh · 成交 %3 MWh · 发电收入 %4 元 / 购电费用 %5 元（购电侧统一按出清价结算；MCP 对拍锚点：250 / 50 / 12500）")
+        QStringLiteral("一键演示完成（分段报价对拍口径，申报形式/出清机制已同步回分段）：%1 模式 · 出清价 %2 元/MWh · 成交 %3 MWh · 发电收入 %4 元 / 购电费用 %5 元（购电侧统一按出清价结算；MCP 对拍锚点：250 / 50 / 12500）")
             .arg(mode)
             .arg(pr.clearingPrice, 0, 'f', 0)
             .arg(pr.clearedMW, 0, 'f', 0)

@@ -73,6 +73,7 @@ private:
                        const QString &loadFile = QString(),      // 可选：负荷曲线（渗透率基准）
                        bool quadratic = false);                  // 申报形式：二次成本曲线（V1.3.2）
     bool reloadCurrentSource();                      // 按记忆的数据源 + 当前申报形式重载
+    void updateModeCardStates();                     // 模式互斥明示：SCUC 卡可用性 + MCP/PAB 行可见性（V1.3.6）
     QString locateSamplesDir() const;                // 定位仓库 data/samples 目录
     void runClearing();                              // 多时段出清（新能源 = 渗透率×负荷）
 

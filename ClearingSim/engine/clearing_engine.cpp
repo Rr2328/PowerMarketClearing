@@ -38,7 +38,7 @@ ClearResult ClearMarket(QVector<Generator>generators,QVector<Consumer>consumers)
     for (const Consumer&c:consumers)
         residualDemand+=c.demand;
     constexpr double kDemandTol=0.5;    // MW
-    constexpr double kPriceCap=540.0;  // 总则规则④：双侧统一限价
+    constexpr double kPriceCap=1500.0;  // 总则规则④：双侧统一限价（V1.3.1 稀缺封顶口径）
     if(gindex>=generators.size()&&residualDemand>kDemandTol)
         clearresult.clearingprice=kPriceCap;
     else
