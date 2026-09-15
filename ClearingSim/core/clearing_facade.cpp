@@ -7,6 +7,7 @@
 #include <QDebug>
 
 #include <algorithm>
+#include <utility>
 
 // ============================================================
 // 引擎外壳（2026-09-02 起接入 B 位真实引擎）
@@ -289,15 +290,15 @@ PeriodResult ClearingFacade::clearOne(const MarketData &market, int period,
 
     // 新能源实际消纳量（0 价供给段若未被全部吸收，则以成交为准）
     double renewActual = 0.0;
-    for (const auto &e : out.genDetails) {
+    for (const auto &e : std::as_const(out.genDetails)) {
         if (e.id == QStringLiteral("RENEW"))
             renewActual += e.clearedMW;
     }
     out.renewMW = renewActual;
 
-    for (const auto &e : out.genDetails)
+    for (const auto &e : std::as_const(out.genDetails))
         out.genFee += e.money;
-    for (const auto &e : out.conDetails)
+    for (const auto &e : std::as_const(out.conDetails))
         out.conFee += e.money;
 
     return out;
@@ -392,9 +393,9 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData &market,
             }
         }
 
-        for (const auto &e : out.genDetails)
+        for (const auto &e : std::as_const(out.genDetails))
             out.genFee += e.money;
-        for (const auto &e : out.conDetails)
+        for (const auto &e : std::as_const(out.conDetails))
             out.conFee += e.money;
 
         raw.append(out);
@@ -475,9 +476,9 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
     if (!s.ok) {
         // 诊断日志：定位应用内求解失败原因（测试同数据可行，需对比入参）
         double dmin = std::numeric_limits<double>::max(), dmax = -dmin, dsum = 0.0;
-        for (double v : demand) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); dsum += v; }
+        for (double v : std::as_const(demand)) { dmin = std::min(dmin, v); dmax = std::max(dmax, v); dsum += v; }
         double pMaxSum = 0.0, pMinSum = 0.0;
-        for (const auto &g : market.generatorMeta) { pMaxSum += g.pMax; pMinSum += g.pMin; }
+        for (const auto &g : std::as_const(market.generatorMeta)) { pMaxSum += g.pMax; pMinSum += g.pMin; }
         qWarning() << "[UC-DIAG] solve failed:" << s.message
                    << "units =" << market.generatorMeta.size()
                    << "demand min/max/sum =" << dmin << dmax << dsum
@@ -555,9 +556,9 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData &market,
             }
         }
 
-        for (const auto &e : out.genDetails)
+        for (const auto &e : std::as_const(out.genDetails))
             out.genFee += e.money;
-        for (const auto &e : out.conDetails)
+        for (const auto &e : std::as_const(out.conDetails))
             out.conFee += e.money;
 
         raw.append(out);
