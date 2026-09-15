@@ -53,7 +53,7 @@ ClearingResult ClearingFacade::clearBenchmark(const MarketData&market, const QSt
     ClearingResult result;
     result.mode=mode;
     result.sourceName=QStringLiteral("内置基准例 · 真引擎出清");
-    result.periods.append(clearOne(market,1,QStringLiteral("全日"),demand,0.0,1.0,mode));
+    result.periods.append(clearOne(market,1,QStringLiteral("全日"),demand,0.0,1.0,1.0,mode));
     return result;
 }
 //基础模式：96多时段循环，之后在进行24小时聚合形成24小时图
@@ -76,7 +76,7 @@ ClearingResult ClearingFacade::clearPeriods(const MarketData&market, int periodC
         const QString time=periodTime(period,96);
         const double demand=totalDemandAt(market,period);
         const double renewCap=renewCapacityAt(market,period,penetration);
-        raw.append(clearOne(market,period,time,demand,renewCap,1.0,mode));
+        raw.append(clearOne(market,period,time,demand,renewCap,1.0,0.25,mode));
     }
     if(periodCount==24)
     {
@@ -133,8 +133,9 @@ QString ClearingFacade::periodTime(int period, int periodCount)
 }
 //单个时段的出清核心
 PeriodResult ClearingFacade::clearOne(const MarketData&market, int period,
-                                      const QString&time, double demandMW, double renewMW,
-                                      double scale, const QString&mode)
+                                       const QString&time, double demandMW, double renewMW,
+                                       double scale, double durationHours,
+                                       const QString&mode)
 {
     PeriodResult out;
     out.period=period;
@@ -200,8 +201,8 @@ PeriodResult ClearingFacade::clearOne(const MarketData&market, int period,
         ge.segment=t.generatorseg;
         ge.bidPrice=t.generatorprice;
         ge.clearedMW+=t.volume;
-        ge.money+=pab?t.volume*t.generatorprice
-                        :t.volume*cr.clearingprice;
+        ge.money+=(pab?t.volume*t.generatorprice
+                       :t.volume*cr.clearingprice)*durationHours;
         const QString ck=t.consumerID+QLatin1Char('#')
                            +QString::number(t.consumerseg);
         EntityCleared &ce=conMap[ck];
@@ -209,7 +210,7 @@ PeriodResult ClearingFacade::clearOne(const MarketData&market, int period,
         ce.segment=t.consumerseg;
         ce.bidPrice=t.consumerprice;
         ce.clearedMW+=t.volume;
-        ce.money+=t.volume*cr.clearingprice;
+        ce.money+=t.volume*cr.clearingprice*durationHours;
     }
     for(auto&e:genMap)
     {
@@ -298,7 +299,7 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData&market,
             re.segment=0;
             re.bidPrice=0.0;
             re.clearedMW=renewActual;
-            re.money=renewActual*qr.clearingPrice;
+            re.money=renewActual*qr.clearingPrice*0.25;
             out.genDetails.append(re);
         }
         for(const auto&d:qr.dispatch)
@@ -309,7 +310,7 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData&market,
             e.segment=1;
             e.bidPrice=d.marginalCost;   // 边际成本申报口径
             e.clearedMW=d.output;
-            e.money=d.output * qr.clearingPrice;
+            e.money=d.output*qr.clearingPrice*0.25;
             out.genDetails.append(e);
         }
         // 购电侧，固定需求按申报量占比分摊
@@ -331,7 +332,7 @@ ClearingResult ClearingFacade::clearPeriodsQuadratic(const MarketData&market,
                 e.segment=c.segment;
                 e.bidPrice=qr.clearingPrice;   // 统一出清价结算
                 e.clearedMW=load*(c.quantity/conSum);
-                e.money=e.clearedMW*qr.clearingPrice;
+                e.money=e.clearedMW*qr.clearingPrice*0.25;
                 out.conDetails.append(e);
             }
         }
@@ -407,7 +408,7 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData&market,
         loadOf.append(load);
     }
 
-    const UcSolution s=solveUcMilp(market.generatorMeta,demand);
+    const UcSolution s=solveUcMilp(market.generatorMeta,demand,{},0.25);
     if (!s.ok)
     {
         //定位应用内求解失败原因
@@ -461,7 +462,7 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData&market,
             re.segment=0;
             re.bidPrice=0.0;
             re.clearedMW=renewOf[t];
-            re.money=renewOf[t]*lam;
+            re.money=renewOf[t]*lam*0.25;
             out.genDetails.append(re);
         }
         for(int g=0;g<market.generatorMeta.size();++g)
@@ -473,7 +474,7 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData&market,
             e.segment=0;
             e.bidPrice=m.marginalCost;//电量成本申报口径
             e.clearedMW=s.p[g][t];
-            e.money=s.p[g][t]*lam;
+            e.money=s.p[g][t]*lam*0.25;
             e.ucOn=s.u[g][t];//启停状态与技术出力区间
             e.ucPMin=m.pMin;
             e.ucPMax=m.pMax;
@@ -498,7 +499,7 @@ ClearingResult ClearingFacade::clearPeriodsUc(const MarketData&market,
                 e.segment=c.segment;
                 e.bidPrice=lam;//统一出清价结算
                 e.clearedMW=loadOf[t]*(c.quantity/conSum);
-                e.money=e.clearedMW*lam;
+                e.money=e.clearedMW*lam*0.25;
                 out.conDetails.append(e);
             }
         }

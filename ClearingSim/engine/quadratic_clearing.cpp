@@ -12,7 +12,7 @@ double unitSupply(const QuadraticGenerator &g, double price)
 {
     if (g.a<kCoefEps)
     {
-        return price>g.b?g.pMax:0.0;//a≈0时边际成本恒为b的阶梯机组
+        return price>=g.b?g.pMax:0.0;//a≈0时边际成本恒为b的阶梯机组
     }
     const double p=(price-g.b)/(2.0*g.a);
     return std::max(0.0,std::min(p,g.pMax));
@@ -74,18 +74,18 @@ QuadraticClearResult quadraticClearing(QVector<QuadraticGenerator>generators,dou
         return result;
     }
     // 二分搜索
-    double priceLow=0.0;
+    // 搜索“供给首次达到需求”的最低价格。阶梯机组在该价格可部分中标，
+    // 因此不能在二分过程中用 0/满发的跳变结果直接作为最终出力。
+    double priceLow=std::nextafter(minB,-std::numeric_limits<double>::infinity());
     double priceHigh=priceMax;
-    double price=0.5*(priceLow+priceHigh);
-    double total=0.0;
     for (int iter=0;iter<kMaxIter;++iter)
     {
-        total=0.0;
+        const double price=0.5*(priceLow+priceHigh);
+        double total=0.0;
         for(const auto&g:generators)
         {
             total+=unitSupply(g,price);
         }
-        if(std::abs(total-demandMW)<kSupplyTol)break;
         if(total<demandMW)
         {
             priceLow=price;
@@ -94,17 +94,56 @@ QuadraticClearResult quadraticClearing(QVector<QuadraticGenerator>generators,dou
         {
             priceHigh=price;
         }
-        price=0.5*(priceLow+priceHigh);
+        const double priceScale=std::max({1.0,std::abs(priceLow),std::abs(priceHigh)});
+        if(priceHigh-priceLow<=1e-10*priceScale)break;
     }
-    result.ok=(total>=demandMW-kSupplyTol);
+
+    const double price=priceHigh;
+    const double priceTol=1e-7*std::max(1.0,std::abs(price));
+    QVector<double> outputs(generators.size(),0.0);
+    QVector<int> marginalSteps;
+    double total=0.0;
+    for(int i=0;i<generators.size();++i)
+    {
+        const auto&g=generators.at(i);
+        if(g.pMax<=0.0)continue;
+        if(g.a<kCoefEps)
+        {
+            if(g.b<price-priceTol)
+            {
+                outputs[i]=g.pMax;
+                total+=g.pMax;
+            }
+            else if(std::abs(g.b-price)<=priceTol)
+            {
+                marginalSteps.append(i);
+            }
+        }
+        else
+        {
+            outputs[i]=unitSupply(g,price);
+            total+=outputs[i];
+        }
+    }
+    double remaining=std::max(0.0,demandMW-total);
+    for(const int i:marginalSteps)
+    {
+        const double accepted=std::min(generators.at(i).pMax,remaining);
+        outputs[i]=accepted;
+        total+=accepted;
+        remaining-=accepted;
+    }
+
+    result.ok=(std::abs(total-demandMW)<=kSupplyTol);
     result.clearingPrice=price;
     result.totalVolume=total;
-    for(const auto&g:generators)
+    for(int i=0;i<generators.size();++i)
     {
+        const auto&g=generators.at(i);
         QuadraticDispatchItem item;
         item.id=g.id;
         item.name=g.name;
-        item.output=unitSupply(g,price);
+        item.output=outputs.at(i);
         item.marginalCost=unitMarginalCost(g,item.output);
         result.dispatch.append(item);
     }

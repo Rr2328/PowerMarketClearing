@@ -72,9 +72,11 @@ struct UcSolution
 //   用途：验证「Σp=D 等式约束的对偶变量 = 边际机组报价」，
 //   即统一边际出清的正统数学口径（方案 §4.4 ★）。
 UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
-                     const QVector<double> &demandMW);
+                     const QVector<double> &demandMW,
+                     double durationHours = 1.0);
 
 // S3：完整 SCUC MILP——0-1 启停 + 爬坡 + 启动费用 + 最小开/停机时间。
 UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
                        const QVector<double> &demandMW,
-                       const UcInitialState &init = {});
+                       const UcInitialState &init = {},
+                       double durationHours = 1.0);

@@ -11,8 +11,8 @@
 
 // ============================================================
 // ClearingFacade 对拍测试（V1.3 · #88）
-//   ① 窄表基准例等价性对拍：渗透率 0 时，96 期逐时段结果
-//      与单时段基准出清（250 元 / 50 MWh / 12500 元）完全一致
+//   ① 窄表基准例等价性对拍：单时段基准保留 50 MWh，连续仿真按
+//      15 分钟时长把 50 MW 换算为 12.5 MWh
 //   ② 场景样例 + 20% 渗透率：逐时段全额成交、价格五级阶梯、
 //      新能源按 P_re(t)=渗透率×负荷(t) 全额消纳（契约 §5.3）
 //   ③ 24 期聚合视图：价 = 4 期均值、费用 = 求和、电量 = 均值（§7.2）
@@ -105,13 +105,13 @@ int main(int argc, char *argv[])
         for (const auto &pr : r96.periods) {
             if (!near(pr.clearingPrice, 250.0)
                 || !near(pr.clearedMW, 50.0)
-                || !near(pr.genFee, 12500.0)
+                || !near(pr.genFee, 3125.0)
                 || !near(pr.renewMW, 0.0)) {
                 allEq = false;
                 break;
             }
         }
-        check(allEq, QStringLiteral("96 期逐时段 = 基准锚点（窄表等价性对拍）"));
+        check(allEq, QStringLiteral("96 期价格/功率与基准一致，费用按 0.25 小时换算"));
 
         check(r96.periods.size() == 96
                   && r96.periods[0].time == QStringLiteral("00:15")
@@ -238,6 +238,28 @@ int main(int argc, char *argv[])
                   && near(r2.periods[0].clearingPrice, 0.0)
                   && near(r2.periods[0].clearedMW, 0.0),
               QStringLiteral("价格不交叉：零成交、出清价 0（不触发封顶）"));
+
+        // 场景 C：高报价需求刚好用完供给，后续低报价需求正常落标，不属于稀缺。
+        MarketData m3;
+        GeneratorBid g3 = g;
+        g3.price = 100.0;
+        g3.quantity = 20.0;
+        m3.generatorBids.append(g3);
+        ConsumerBid high = c;
+        high.price = 300.0;
+        high.quantity = 20.0;
+        ConsumerBid low = c;
+        low.id = QStringLiteral("L2");
+        low.name = QStringLiteral("低报价用户");
+        low.segment = 2;
+        low.price = 50.0;
+        low.quantity = 100.0;
+        m3.consumerBids << high << low;
+        const ClearingResult r3 = ClearingFacade::clearBenchmark(m3, QStringLiteral("MCP"));
+        check(r3.periods.size() == 1
+                  && near(r3.periods[0].clearingPrice, 100.0)
+                  && near(r3.periods[0].clearedMW, 20.0),
+              QStringLiteral("低报价需求正常落标：不误触发 1500 稀缺价"));
     }
 
     // ---------------- ⑥ UC 模式端到端：场景样例 + generator_meta.csv（S4） ----------------

@@ -250,7 +250,7 @@ int main(int argc,char *argv[])
         ok = DataReader::readGeneratorBids(badHeaderFile,generators,errors);
         check(!ok,"识别固定表头错误");
 
-        // 超过 5 个申报段
+        // 超过课程题目允许的 10 个申报段
         const QString tooManySegments = tempDir.path() + "/too_many_segments.csv";
         writeTextFile(tooManySegments,"机组ID,机组名称,机组类型,申报段,申报电价(元/MWh),申报电量(MWh)\n"
                                        "G1,一号火电,火电,1,100.000,10.0\n"
@@ -258,10 +258,15 @@ int main(int argc,char *argv[])
                                        "G1,一号火电,火电,3,120.000,10.0\n"
                                        "G1,一号火电,火电,4,130.000,10.0\n"
                                        "G1,一号火电,火电,5,140.000,10.0\n"
-                                       "G1,一号火电,火电,6,150.000,10.0\n");
+                                       "G1,一号火电,火电,6,150.000,10.0\n"
+                                       "G1,一号火电,火电,7,160.000,10.0\n"
+                                       "G1,一号火电,火电,8,170.000,10.0\n"
+                                       "G1,一号火电,火电,9,180.000,10.0\n"
+                                       "G1,一号火电,火电,10,190.000,10.0\n"
+                                       "G1,一号火电,火电,11,200.000,10.0\n");
         errors.clear();
         ok = DataReader::readGeneratorBids(tooManySegments,generators,errors);
-        check(!ok,"识别超过 5 个申报段");
+        check(!ok,"识别超过 10 个申报段");
 
         // 申报段不连续
         const QString gapSegmentFile = tempDir.path() + "/gap_segment.csv";

@@ -668,7 +668,7 @@ void materializeToConsumerBids(
 }
 
 // 识别长表表头并校验成对列结构
-//   返回段对数（1~5）；不是长表返回 0；是长表意图但结构错误返回 -1
+//   返回段对数（1~10）；不是长表返回 0；是长表意图但结构错误返回 -1
 int parseLongHeader(
     const QStringList &header,
     const LongTableConfig &cfg,
@@ -700,12 +700,12 @@ int parseLongHeader(
 
     if ((header.size() - 3) % 2 != 0 ||
         pairCount < 1 ||
-        pairCount > 5)
+        pairCount > 10)
     {
         addError(
             errors,
             cfg.prefix,
-            "长表表头段列不成对：第N段出力/第N段报价必须成对出现，且最多 5 段");
+            "长表表头段列不成对：第N段出力/第N段报价必须成对出现，且最多 10 段");
 
         return -1;
     }
@@ -1087,13 +1087,13 @@ bool parseNarrowBidRows(
         {
             rowValid = false;
         }
-        else if (item.segment > 5)
+        else if (item.segment > 10)
         {
             addError(
                 errors,
                 prefix,
                 QString(
-                    "第 %1 行申报段不能超过 5")
+                    "第 %1 行申报段不能超过 10")
                     .arg(row.lineNumber));
 
             rowValid = false;

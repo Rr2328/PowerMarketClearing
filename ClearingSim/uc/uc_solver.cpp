@@ -20,7 +20,8 @@
 // S2：线性规划版（全机组运行）
 // ============================================================
 UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
-                     const QVector<double> &demandMW)
+                     const QVector<double> &demandMW,
+                     double durationHours)
 {
     UcSolution sol;
     const int G = metas.size();       // 机组数
@@ -29,6 +30,8 @@ UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
         sol.message = QStringLiteral("无机组或无需求数据");
         return sol;
     }
+    if (durationHours <= 0.0)
+        durationHours = 1.0;
 
     const double kInf = std::numeric_limits<double>::infinity();
 
@@ -46,7 +49,7 @@ UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
     // min Σ_t Σ_g  c_g · p[g,t]
     for (int g = 0; g < G; ++g)
         for (int t = 0; t < T; ++t)
-            h.changeColCost(g * T + t, metas[g].marginalCost);
+            h.changeColCost(g * T + t, metas[g].marginalCost * durationHours);
 
     // ---------- 约束① 功率平衡 ----------
     // 每时段一条等式：Σ_g p[g,t] = D(t)。
@@ -79,7 +82,7 @@ UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
     }
     sol.lambda.resize(T);
     for (int t = 0; t < T; ++t)
-        sol.lambda[t] = s.row_dual[t];   // 功率平衡行的对偶 = 出清价
+        sol.lambda[t] = s.row_dual[t] / durationHours;   // 还原为元/MWh
     sol.totalCost = h.getObjectiveValue();
     sol.ok = true;
     return sol;
@@ -97,7 +100,8 @@ UcSolution solveUcLp(const QVector<GeneratorMeta> &metas,
 // ============================================================
 UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
                        const QVector<double> &demandMW,
-                       const UcInitialState &init)
+                       const UcInitialState &init,
+                       double durationHours)
 {
     UcSolution sol;
     const int G = metas.size();
@@ -106,6 +110,8 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
         sol.message = QStringLiteral("无机组或无需求数据");
         return sol;
     }
+    if (durationHours <= 0.0)
+        durationHours = 1.0;
 
     // ---------- 初始状态（缺省 = 全开机、初始出力 = pMin） ----------
     QVector<bool> on0(G);
@@ -148,13 +154,13 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
     for (int t = 0; t < T; ++t)
         h.addVar(0.0, kInf);                                           // r[t] 失负荷松弛
     for (int t = 0; t < T; ++t)
-        h.changeColCost(OFF_R + t, kShedCost);                         // 失负荷惩罚 = 限价 1500
+        h.changeColCost(OFF_R + t, kShedCost * durationHours);         // 失负荷电量成本
 
     // ---------- 目标函数 ----------
     // min Σ  c_g·p + noLoadCost_g·u + startupCost_g·su
     for (int g = 0; g < G; ++g)
         for (int t = 0; t < T; ++t) {
-            h.changeColCost(g * T + t, metas[g].marginalCost);
+            h.changeColCost(g * T + t, metas[g].marginalCost * durationHours);
             h.changeColCost(OFF_U + g * T + t, metas[g].noLoadCost);
             h.changeColCost(OFF_SU + g * T + t, metas[g].startupCost);
         }
@@ -382,11 +388,11 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
             boxLo[t * G + g] = lo;
             boxHi[t * G + g] = hi;
             h2.addVar(lo, hi);
-            h2.changeColCost(t * G1 + g, metas[g].marginalCost);
+            h2.changeColCost(t * G1 + g, metas[g].marginalCost * durationHours);
         }
         // 该时段的失负荷松弛
         h2.addVar(0.0, kInf);
-        h2.changeColCost(t * G1 + G, kShedCost);
+        h2.changeColCost(t * G1 + G, kShedCost * durationHours);
         QVector<HighsInt> cols(G1);
         QVector<double> coefs(G1, 1.0);
         for (int g = 0; g < G; ++g)
@@ -396,13 +402,9 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
     }
     h2.run();
     if (h2.getModelStatus() == HighsModelStatus::kOptimal) {
-        const HighsSolution &ed = h2.getSolution();
-        sol.p.resize(G);
-        for (int g = 0; g < G; ++g) {
-            sol.p[g].resize(T);
-            for (int t = 0; t < T; ++t)
-                sol.p[g][t] = ed.col_value[t * G1 + g];
-        }
+        // 返回第一阶段的跨时段可行出力。第二阶段各时段独立，若用其出力覆盖
+        // pStar，可能破坏相邻时段爬坡约束；MILP 出力本身已按同一电量成本最优。
+        sol.p = pStar;
         // λ 定价（统一边际出清口径）：
         //   失负荷时段 = 失负荷价值 1500（V1.3.1 稀缺封顶）；
         //   有机组出力处于箱型边界内点（lo < p < hi）→ 边际机组 = 内点中最贵的；
@@ -413,7 +415,7 @@ UcSolution solveUcMilp(const QVector<GeneratorMeta> &metas,
         sol.shed.resize(T);
         const double kTol = 1e-4;
         for (int t = 0; t < T; ++t) {
-            sol.shed[t] = ed.col_value[t * G1 + G];   // 失负荷缺口（稀缺时段 > 0）
+            sol.shed[t] = mip.col_value[OFF_R + t];   // MILP 中的实际失负荷缺口
             if (sol.shed[t] > 0.5) {
                 sol.lambda[t] = kShedCost;
                 continue;
