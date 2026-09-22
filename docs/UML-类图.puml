@@ -1,0 +1,199 @@
+@startuml
+' ============================================================
+' 电力现货市场出清仿真平台 · UML 类图（结项补交版）
+' 横向布局 · 浅色打印友好 · 关系线含多重性
+' 精度：类名 + 关键属性 + 代表性方法（不列完整函数签名）
+' ============================================================
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam dpi 150
+skinparam defaultFontName "Microsoft YaHei"
+skinparam defaultFontSize 12
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam packageBackgroundColor #F4F7FA
+skinparam packageBorderColor #7A93AB
+skinparam classBackgroundColor #FFFFFF
+skinparam classBorderColor #2C5F8A
+skinparam ArrowColor #2C5F8A
+skinparam ArrowThickness 1.2
+skinparam TitleFontSize 16
+
+title 电力现货市场出清仿真平台 · UML 类图
+
+left to right direction
+
+package "ui · 界面层" {
+  class MainWindow {
+    - m_session : AppSession
+    + onLoadSamples()
+    + onRunSim()
+    - runClearing()
+    - refreshXxxPage()
+  }
+}
+
+package "core · 会话与外观层" {
+  class AppSession {
+    + market : MarketData
+    + marketBaseline : MarketData
+    + result : ClearingResult
+    + renewPercent : double
+    + quadraticMode : bool
+    + ucMode : bool
+    + perspective : Perspective
+    + resetResult()
+  }
+  enum Perspective {
+    Gen（发电侧）
+    Con（购电侧）
+    Platform（平台）
+  }
+  class ClearingFacade <<static>> {
+    + renewCapacityAt() : double
+    + clearPeriods() : ClearingResult
+    + clearPeriodsQuadratic() : ClearingResult
+    + clearPeriodsUc() : ClearingResult
+    - clearOne() : PeriodResult
+  }
+  class ClearingResult {
+    + mode : QString
+    + periods : QVector<PeriodResult>
+    + startupCostTotal : double
+    + totalCost : double
+    + ucUnitOn : QVector<QVector<int>>
+  }
+  class PeriodResult {
+    + period : int
+    + clearingPrice : double
+    + clearedMW : double
+    + renewMW : double
+    + genDetails : QVector<EntityCleared>
+    + conDetails : QVector<EntityCleared>
+  }
+  class EntityCleared {
+    + id / name / segment
+    + bidPrice : double
+    + clearedMW : double
+    + money : double
+    + ucOn : int
+  }
+  class MarketView <<namespace>> {
+    + genSupplyCurve()
+    + conDemandCurve()
+    + periodSums()
+  }
+}
+
+package "engine · 出清算法层" {
+  class ClearingEngine <<static>> {
+    + ClearMarket() : ClearResult
+  }
+  class QuadraticClearing <<static>> {
+    + quadraticClearing() : QuadraticClearResult
+  }
+  class QuadraticGenerator <<struct>> {
+    + a, b, c : double
+    + pMax : double
+  }
+  class UcSolver <<static>> {
+    + solveUcLp() : UcSolution
+    + solveUcMilp() : UcSolution
+  }
+  class GeneratorMeta <<struct>> {
+    + pMin / pMax : double
+    + rampUp / rampDown : double
+    + minUpTime / minDownTime : int
+    + startupCost / noLoadCost : double
+    + marginalCost : double
+  }
+  class "HiGHS v1.15 求解器" as HiGHS <<external>>
+}
+
+package "data · 数据层" {
+  class DataReader <<static>> {
+    + readGeneratorBids()
+    + readConsumerBids()
+    + readLoadCurve()
+    + readQuadraticGenerators()
+    + readGeneratorMeta()
+    + readAll() : bool
+    + validateRelations() : bool
+  }
+  class "csv_utils / data_validator" as Teammate <<namespace teammate>> {
+    + readCsvRows()
+    + parseDouble()
+    + checkPriceRange()
+    + validateParticipantPeriods()
+  }
+  class ScenarioManager <<static>> {
+    + aggregateLoadTo24()
+    + buildPeriodScenarios()
+  }
+  class MarketData {
+    + generatorBids : QVector<GeneratorBid>
+    + consumerBids : QVector<ConsumerBid>
+    + loadCurve : QVector<LoadPoint>
+    + quadraticGens : QVector<QuadraticGenerator>
+    + generatorMeta : QVector<GeneratorMeta>
+  }
+  class GeneratorBid {
+    + id : QString（机组编号）
+    + name : QString（电厂名称）
+    + period : int（1~96）
+    + segment : int
+    + price : double
+    + quantity : double（0=停机）
+  }
+  class ConsumerBid <<struct>>
+  class LoadPoint <<struct>>
+}
+
+' ============ 关系（含多重性） ============
+
+' UI → 会话/后端
+MainWindow "1" *-- "1" AppSession : m_session
+MainWindow ..> ClearingFacade : «call» 三选一出清
+MainWindow ..> DataReader : «call» 导入
+MainWindow ..> MarketView : «call» 供需截面
+
+' 会话拥有的数据
+AppSession "1" *-- "2" MarketData : market + baseline
+AppSession "1" *-- "1" ClearingResult : result
+AppSession "1" --> "1" Perspective : 视角过滤
+
+' 结果树
+ClearingResult "1" *-- "1..96" PeriodResult : periods
+PeriodResult "1" *-- "0..*" EntityCleared : gen/con 明细
+
+' 市场数据树
+MarketData "1" *-- "0..*" GeneratorBid
+MarketData "1" *-- "0..*" ConsumerBid
+MarketData "1" *-- "0..96" LoadPoint : 负荷曲线
+MarketData "1" *-- "0..*" QuadraticGenerator : «可选»
+MarketData "1" *-- "0..*" GeneratorMeta : «可选»
+
+' 外观 → 三引擎
+ClearingFacade ..> ClearingEngine : 基础（分段撮合）
+ClearingFacade ..> QuadraticClearing : 二次曲线
+ClearingFacade ..> UcSolver : UC 机组组合
+
+' 引擎内部依赖
+QuadraticClearing ..> QuadraticGenerator
+UcSolver ..> GeneratorMeta
+UcSolver ..> HiGHS : «MILP»
+
+' 数据层
+DataReader ..> MarketData : «create»
+DataReader ..> Teammate : «use»
+ScenarioManager ..> MarketData : «read» 24时段聚合
+
+legend bottom
+  <b>记号说明</b>：实线 + 实心菱形 = 组合（整体拥有部分，随整体销毁）；
+  虚线箭头 = 依赖（临时调用/使用）；«static» = 静态工具类（无实例状态）；
+  «可选» = 仅当导入对应 CSV（generator_quadratic / generator_meta）时非空；
+  «external» = 第三方开源库（MIT 协议，vendored 于 third_party/）；
+  引擎内部结构体：ClearingEngine 用 Generator / Consumer / ClearResult（分段撮合）；
+  QuadraticClearing 返回 QuadraticClearResult；UcSolver 返回 UcSolution（λ(t)=出清价）
+endlegend
+@enduml
